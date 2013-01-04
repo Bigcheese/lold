@@ -232,6 +232,8 @@ public:
 
   // FIXME: Need to revisit this in future.
   virtual Interposable interposable() const {
+    if (_symbol->st_other == llvm::ELF::STV_DEFAULT)
+      return interposeYes;
     return interposeNo;
   }
 
@@ -243,6 +245,9 @@ public:
     if ((_symbol->getType() == llvm::ELF::STT_COMMON)
         || _symbol->st_shndx == llvm::ELF::SHN_COMMON)
       return mergeAsTentative;
+
+    if (_sectionName.startswith(".gnu.linkonce"))
+      return mergeAsWeakAndAddressUsed;
 
     return mergeNo;
   }
