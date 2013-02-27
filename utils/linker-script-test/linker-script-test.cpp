@@ -162,8 +162,94 @@ private:
   SourceMgr _sourceManager;
 };
 
-class ASTNode {
+class Command {
 public:
+  enum Kind {
+    CK_OutputFormat,
+    CK_Group,
+    CK_AsNeeded
+  };
+
+  Kind getKind() const { return _kind; }
+
+protected:
+  Command(Kind k) : _kind(k) {}
+
+private:
+  Kind _kind;
+};
+
+class OutputFormat : public Command {
+public:
+  OutputFormat(StringRef format) : Command(CK_OutputFormat), _format(format) {}
+
+  static bool classof(const Command *c) {
+    return c->getKind() == CK_OutputFormat;
+  }
+
+  StringRef getFormat() const { return _format; }
+
+private:
+  StringRef _format;
+};
+
+class AsNeeded : public Command {
+public:
+  AsNeeded() : Command(CK_AsNeeded) {}
+
+  static bool classof(const Command *c) {
+    return c->getKind() == CK_AsNeeded;
+  }
+
+  void addPath(StringRef p) { _paths.push_back(p); }
+
+  const std::vector<StringRef> &getPaths() const {
+    return _paths;
+  }
+
+private:
+  std::vector<StringRef> _paths;
+};
+
+class Group : public Command {
+public:
+  struct PathOrAsNeeded {
+    StringRef _path;
+    const AsNeeded *_asNeeded;
+
+    PathOrAsNeeded() : _asNeeded(nullptr) {}
+  };
+
+  Group() : Command(CK_Group) {}
+
+  static bool classof(const Command *c) {
+    return c->getKind() == CK_Group;
+  }
+
+  void addPath(StringRef p) {
+    PathOrAsNeeded poan;
+    poan._path = p;
+    _paths.push_back(poan);
+  }
+
+  void addAsNeeded(const AsNeeded *an) {
+    PathOrAsNeeded poan;
+    poan._asNeeded = an;
+    _paths.push_back(poan);
+  }
+
+  const std::vector<PathOrAsNeeded> &getPaths() const {
+    return _paths;
+  }
+
+private:
+  std::vector<PathOrAsNeeded> _paths;
+};
+
+class LinkerScript {
+public:
+private:
+  std::vector<Command *> _commands;
 };
 
 int main(int argc, const char **argv) {
