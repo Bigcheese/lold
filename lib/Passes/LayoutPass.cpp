@@ -133,7 +133,7 @@ bool LayoutPass::CompareAtoms::operator()(const DefinedAtom *left,
 ///    targetAtoms and its tree to the current chain
 void LayoutPass::buildFollowOnTable(MutableFile::DefinedAtomRange &range) {
   for (auto ai : range) {
-    for (const Reference *r : *ai) {
+    for (const auto r : ai->references()) {
       if (r->kind() == lld::Reference::kindLayoutAfter) {
         const DefinedAtom *targetAtom = llvm::dyn_cast<DefinedAtom>(r->target());
         _followOnNexts[ai] = targetAtom;
@@ -252,7 +252,7 @@ void LayoutPass::buildInGroupTable(MutableFile::DefinedAtomRange &range) {
   // This table would convert precededby references to follow on
   // references so that we have only one table
   for (auto ai : range) {
-    for (const Reference *r : *ai) {
+    for (const auto r : ai->references()) {
       if (r->kind() == lld::Reference::kindInGroup) {
         const DefinedAtom *rootAtom = llvm::dyn_cast<DefinedAtom>(r->target());
         // If the root atom is not part of any root
@@ -338,7 +338,7 @@ void LayoutPass::buildPrecededByTable(MutableFile::DefinedAtomRange &range) {
   // This table would convert precededby references to follow on
   // references so that we have only one table
   for (auto ai : range) {
-    for (const Reference *r : *ai) {
+    for (const Reference *r : ai->references()) {
       if (r->kind() == lld::Reference::kindLayoutBefore) {
         const DefinedAtom *targetAtom = llvm::dyn_cast<DefinedAtom>(r->target());
         // Is the targetAtom not chained

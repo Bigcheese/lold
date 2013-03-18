@@ -498,7 +498,7 @@ ErrorOr<const AtomLayout &> DefaultLayout<ELFT>::addAtom(const Atom *atom) {
     AtomSection<ELFT> *section =
         getSection(sectionName, contentType, permissions);
     // Add runtime relocations to the .rela section.
-    for (const auto &reloc : *definedAtom)
+    for (const auto reloc : definedAtom->references())
       if (_targetInfo.isDynamicRelocation(*definedAtom, *reloc))
         getDynamicRelocationTable()->addRelocation(*definedAtom, *reloc);
       else if (_targetInfo.isPLTRelocation(*definedAtom, *reloc))

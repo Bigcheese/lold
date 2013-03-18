@@ -132,33 +132,13 @@ public:
 
   virtual bool isAlias() const { return false; }
 
-  virtual DefinedAtom::reference_iterator begin() const {
-    uintptr_t index = 0;
-    const void *it = reinterpret_cast<const void *>(index);
-    return reference_iterator(*this, it);
-  }
-
-  virtual DefinedAtom::reference_iterator end() const {
-    uintptr_t index = _references.size();
-    const void *it = reinterpret_cast<const void *>(index);
-    return reference_iterator(*this, it);
-  }
-
-  virtual const Reference *derefIterator(const void *it) const {
-    uintptr_t index = reinterpret_cast<uintptr_t>(it);
-    assert(index < _references.size());
-    return &_references[index];
-  }
-
-  virtual void incrementIterator(const void *&it) const {
-    uintptr_t index = reinterpret_cast<uintptr_t>(it);
-    ++index;
-    it = reinterpret_cast<const void *>(index);
+  virtual range<const Reference * const *> references() const {
+    return _references;
   }
 
   void addReference(Reference::Kind kind, uint64_t offset, const Atom *target,
                     Reference::Addend addend) {
-    _references.push_back(SimpleReference(kind, offset, target, addend));
+    _references.push_back(new (_alloc) SimpleReference(kind, offset, target, addend));
   }
 
   void setOrdinal(uint64_t ord) { _ordinal = ord; }
@@ -166,7 +146,8 @@ public:
 private:
   const File &_file;
   uint64_t _ordinal;
-  std::vector<SimpleReference> _references;
+  llvm::BumpPtrAllocator _alloc;
+  std::vector<const Reference *> _references;
 };
 
 class SimpleUndefinedAtom : public UndefinedAtom {

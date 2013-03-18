@@ -227,9 +227,9 @@ void Resolver::resolveUndefines() {
 void Resolver::updateReferences() {
   for(const Atom *atom : _atoms) {
     if (const DefinedAtom* defAtom = dyn_cast<DefinedAtom>(atom)) {
-      for (const Reference *ref : *defAtom) {
-        const Atom* newTarget = _symbolTable.replacement(ref->target());
-        (const_cast<Reference*>(ref))->setTarget(newTarget);
+      for (const Reference *ref : defAtom->references()) {
+        const Atom *newTarget = _symbolTable.replacement(ref->target());
+        const_cast<Reference *>(ref)->setTarget(newTarget);
       }
     }
   }
@@ -247,7 +247,7 @@ void Resolver::markLive(const Atom &atom) {
 
   // mark all atoms it references as live
   if ( const DefinedAtom* defAtom = dyn_cast<DefinedAtom>(&atom)) {
-    for (const Reference *ref : *defAtom) {
+    for (const Reference *ref : defAtom->references()) {
       const Atom *target = ref->target();
       if ( target != nullptr )
         this->markLive(*target);

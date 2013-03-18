@@ -359,7 +359,7 @@ void AtomSection<ELFT>::write(ELFWriter *writer,
     const TargetRelocationHandler<ELFT> &relHandler =
         this->_targetInfo.template getTargetHandler<ELFT>()
         .getRelocationHandler();
-    for (const auto ref : *definedAtom)
+    for (const auto ref : definedAtom->references())
       relHandler.applyRelocation(*writer, buffer, *ai, *ref);
   }
 }

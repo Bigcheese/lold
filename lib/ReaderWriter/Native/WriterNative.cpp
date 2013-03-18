@@ -455,7 +455,7 @@ private:
     count = 0;
     size_t startRefSize = _references.size();
     uint32_t result = startRefSize;
-    for (const Reference *ref : atom) {
+    for (const auto ref : atom.references()) {
       NativeReferenceIvarsV1 nref;
       nref.offsetInAtom = ref->offsetInAtom();
       nref.kind = ref->kind();

@@ -574,7 +574,7 @@ void SectionChunk::write(uint8_t *chunkBuffer) {
     uint8_t* atomContent = chunkBuffer + atomInfo.offsetInSection;
     ::memcpy(atomContent, content.data(), contentSize);
     // Apply fixups to file buffer
-    for (const Reference *ref : *atomInfo.atom) {
+    for (const auto ref : atomInfo.atom->references()) {
       uint32_t offset = ref->offsetInAtom();
       uint64_t targetAddress = 0;
       if ( ref->target() != nullptr )
@@ -1026,7 +1026,7 @@ void BindingInfoChunk::computeSize(const lld::File &file,
       int ordinal;
 
       // look for fixups pointing to shlib atoms
-      for (const Reference *ref : *atom ) {
+      for (const auto ref : atom->references()) {
         const Atom *target = ref->target();
         if ( target != nullptr ) {
           const SharedLibraryAtom *shlTarget
@@ -1098,14 +1098,14 @@ const char* LazyBindingInfoChunk::info() {
 // that immediate value to be the offset parameter.
 void LazyBindingInfoChunk::updateHelper(const DefinedAtom *lazyPointerAtom,
                                         uint32_t offset) {
-  for (const Reference *ref : *lazyPointerAtom ) {
+  for (const auto ref : lazyPointerAtom->references()) {
     if ( ! _writer.kindHandler()->isPointer(ref->kind() ) )
       continue;
     const Atom *targ = ref->target();
     const DefinedAtom *helperAtom = dyn_cast<DefinedAtom>(targ);
     assert(helperAtom != nullptr);
     // Found helper atom.  Search it for Reference that is lazy immediate value.
-    for (const Reference *href : *helperAtom ) {
+    for (const auto href : helperAtom->references()) {
       if ( _writer.kindHandler()->isLazyImmediate(href->kind()) ) {
         (const_cast<Reference*>(href))->setAddend(offset);
         return;
@@ -1155,7 +1155,7 @@ void LazyBindingInfoChunk::computeSize(const lld::File &file,
       // write symbol name and flags
       int flags = 0;
       StringRef name;
-      for (const Reference *ref : *lazyPointerAtom ) {
+      for (const auto ref : lazyPointerAtom->references()) {
         if ( _writer.kindHandler()->isLazyTarget(ref->kind()) ) {
           const Atom *shlib = ref->target();
           assert(shlib != nullptr);

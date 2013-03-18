@@ -168,7 +168,7 @@ public:
                  llvm::ArrayRef<uint8_t> contentData,
                  unsigned int referenceStart,
                  unsigned int referenceEnd,
-                 std::vector<ELFReference<ELFT>*> &referenceList)
+                 std::vector<Reference *> &referenceList)
 
     : _owningFile(file)
     , _symbolName(symbolName)
@@ -442,29 +442,9 @@ public:
     return _contentData;
   }
 
-  DefinedAtom::reference_iterator begin() const {
-    uintptr_t index = _referenceStartIndex;
-    const void *it = reinterpret_cast<const void*>(index);
-    return reference_iterator(*this, it);
-  }
-
-  DefinedAtom::reference_iterator end() const {
-    uintptr_t index = _referenceEndIndex;
-    const void *it = reinterpret_cast<const void*>(index);
-    return reference_iterator(*this, it);
-  }
-
-  const Reference *derefIterator(const void *It) const {
-    uintptr_t index = reinterpret_cast<uintptr_t>(It);
-    assert(index >= _referenceStartIndex);
-    assert(index < _referenceEndIndex);
-    return ((_referenceList)[index]);
-  }
-
-  void incrementIterator(const void *&It) const {
-    uintptr_t index = reinterpret_cast<uintptr_t>(It);
-    ++index;
-    It = reinterpret_cast<const void *>(index);
+  virtual range<const Reference * const *> references() const {
+    range<const Reference * const *> r(_referenceList);
+    return r.slice(_referenceStartIndex, _referenceEndIndex);
   }
 
   void addReference(ELFReference<ELFT> *reference) {
@@ -486,7 +466,7 @@ private:
   uint64_t _ordinal;
   unsigned int _referenceStartIndex;
   unsigned int _referenceEndIndex;
-  std::vector<ELFReference<ELFT> *> &_referenceList;
+  std::vector<Reference *> &_referenceList;
   // Cached size of the TLS segment.
   mutable TargetAtomHandler<ELFT> *_targetAtomHandler;
 };
@@ -544,21 +524,9 @@ public:
 
   virtual llvm::ArrayRef<uint8_t> rawContent() const { return _contentData; }
 
-  DefinedAtom::reference_iterator begin() const {
-    uintptr_t index = 0;
-    const void *it = reinterpret_cast<const void *>(index);
-    return reference_iterator(*this, it);
+  virtual range<const Reference * const *> references() const {
+    return range<const Reference * const *>();
   }
-
-  DefinedAtom::reference_iterator end() const {
-    uintptr_t index = 0;
-    const void *it = reinterpret_cast<const void *>(index);
-    return reference_iterator(*this, it);
-  }
-
-  const Reference *derefIterator(const void *It) const { return nullptr; }
-
-  void incrementIterator(const void *&It) const {}
 
 private:
 

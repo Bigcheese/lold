@@ -106,19 +106,8 @@ public:
     return ArrayRef<uint8_t>();
   }
 
-  virtual reference_iterator begin() const {
-    return reference_iterator(*this, nullptr);
-  }
-
-  virtual reference_iterator end() const {
-    return reference_iterator(*this, nullptr);
-  }
-
-  virtual const Reference *derefIterator(const void *iter) const {
-    return nullptr;
-  }
-
-  virtual void incrementIterator(const void *&iter) const {
+  virtual range<const Reference * const *> references() const {
+    return range<const Reference * const *>();
   }
 
 private:
@@ -202,19 +191,8 @@ public:
     return ArrayRef<uint8_t>();
   }
 
-  virtual reference_iterator begin() const {
-    return reference_iterator(*this, nullptr);
-  }
-
-  virtual reference_iterator end() const {
-    return reference_iterator(*this, nullptr);
-  }
-
-  virtual const Reference *derefIterator(const void *iter) const {
-    return nullptr;
-  }
-
-  virtual void incrementIterator(const void *&iter) const {
+  virtual range<const Reference * const *> references() const {
+    return range<const Reference * const *>();
   }
 
 private:

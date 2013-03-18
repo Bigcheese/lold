@@ -46,7 +46,7 @@ void GOTPass::perform(MutableFile &mergedFile) {
 
   // Scan all references in all atoms.
   for(const DefinedAtom *atom : mergedFile.defined()) {
-    for (const Reference *ref : *atom) {
+    for (const Reference *ref : atom->references()) {
       // Look at instructions accessing the GOT.
       bool canBypassGOT;
       if (isGOTAccess(ref->kind(), canBypassGOT)) {

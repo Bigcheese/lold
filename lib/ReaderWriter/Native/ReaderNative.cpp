@@ -104,13 +104,7 @@ public:
 
   virtual ArrayRef<uint8_t> rawContent() const;
 
-  virtual reference_iterator begin() const;
-
-  virtual reference_iterator end() const;
-
-  virtual const Reference* derefIterator(const void*) const;
-
-  virtual void incrementIterator(const void*& it) const;
+  virtual range<const Reference * const *> references() const;
 
 private:
   const NativeAtomAttributesV1& attributes() const;
@@ -329,7 +323,7 @@ public:
                     << ", name=" << a->name()
                     << ", size=" << a->size()
                     << "\n");
-      for (const Reference *r : *a ) {
+      for (const Reference *r : a->references()) {
         (void)r;
         DEBUG_WITH_TYPE("ReaderNative", llvm::dbgs()
                     << "        offset="
@@ -355,7 +349,6 @@ public:
     delete _undefinedAtoms._arrayStart;
     delete _sharedLibraryAtoms._arrayStart;
     delete _absoluteAtoms._arrayStart;
-    delete _references.arrayStart;
     delete [] _targetsTable;
   }
 
@@ -556,32 +549,17 @@ private:
   // instantiate array of Referemces from v1 ivar data in file
   error_code processReferencesV1(const uint8_t *base,
                                  const NativeChunk *chunk) {
-    if ( chunk->elementCount == 0 )
+    if (chunk->elementCount == 0)
       return make_error_code(native_reader_error::success);
-    const size_t refSize = sizeof(NativeReferenceV1);
-    size_t refsArraySize = chunk->elementCount * refSize;
-    uint8_t* refsStart = reinterpret_cast<uint8_t*>
-                                (operator new(refsArraySize, std::nothrow));
-    if (refsStart == nullptr)
-      return make_error_code(native_reader_error::memory_error);
-    const size_t ivarElementSize = chunk->fileSize
-                                          / chunk->elementCount;
-    if ( ivarElementSize != sizeof(NativeReferenceIvarsV1) )
+    const size_t ivarElementSize = chunk->fileSize / chunk->elementCount;
+    if (ivarElementSize != sizeof(NativeReferenceIvarsV1))
       return make_error_code(native_reader_error::file_malformed);
-    uint8_t* refsEnd = refsStart + refsArraySize;
-    const NativeReferenceIvarsV1* ivarData =
-                             reinterpret_cast<const NativeReferenceIvarsV1*>
-                                                  (base + chunk->fileOffset);
-    for(uint8_t* s = refsStart; s != refsEnd; s += refSize) {
-      NativeReferenceV1* atomAllocSpace =
-                  reinterpret_cast<NativeReferenceV1*>(s);
-      new (atomAllocSpace) NativeReferenceV1(*this, ivarData);
+    const NativeReferenceIvarsV1 *ivarData =
+        reinterpret_cast<const NativeReferenceIvarsV1 *>(base + chunk->fileOffset);
+    for(size_t i = 0; i < chunk->elementCount; ++i) {
+      _references.push_back(new (_alloc) NativeReferenceV1(*this, ivarData));
       ++ivarData;
     }
-    this->_references.arrayStart = refsStart;
-    this->_references.arrayEnd = refsEnd;
-    this->_references.elementSize = refSize;
-    this->_references.elementCount = chunk->elementCount;
     DEBUG_WITH_TYPE("ReaderNative", llvm::dbgs()
                     << " chunk ReferencesV1:        "
                     << " count=" << chunk->elementCount
@@ -707,9 +685,7 @@ private:
   }
 
   const Reference* referenceByIndex(uintptr_t index) const {
-    assert(index < _references.elementCount);
-    const uint8_t* p = _references.arrayStart + index * _references.elementSize;
-    return reinterpret_cast<const NativeReferenceV1*>(p);
+    return _references[index];
   }
 
   const Atom* target(uint16_t index) const {
@@ -777,7 +753,7 @@ private:
     uint32_t           elementCount;
   };
 
-
+  llvm::BumpPtrAllocator          _alloc;
   std::unique_ptr<llvm::MemoryBuffer> _buffer;
   const NativeFileHeader*         _header;
   AtomArray<DefinedAtom>          _definedAtoms;
@@ -788,7 +764,7 @@ private:
   uint32_t                        _absAbsoluteMaxOffset;
   const uint8_t*                  _attributes;
   uint32_t                        _attributesMaxOffset;
-  IvarArray                       _references;
+  std::vector<const Reference *>  _references;
   const Atom**                    _targetsTable;
   uint32_t                        _targetsTableCount;
   const char*                     _strings;
@@ -831,27 +807,9 @@ inline StringRef NativeDefinedAtomV1::customSectionName() const {
   return _file->string(offset);
 }
 
-DefinedAtom::reference_iterator NativeDefinedAtomV1::begin() const {
-  uintptr_t index = _ivarData->referencesStartIndex;
-  const void* it = reinterpret_cast<const void*>(index);
-  return reference_iterator(*this, it);
-}
-
-DefinedAtom::reference_iterator NativeDefinedAtomV1::end() const {
-  uintptr_t index = _ivarData->referencesStartIndex+_ivarData->referencesCount;
-  const void* it = reinterpret_cast<const void*>(index);
-  return reference_iterator(*this, it);
-}
-
-const Reference* NativeDefinedAtomV1::derefIterator(const void* it) const {
-  uintptr_t index = reinterpret_cast<uintptr_t>(it);
-  return _file->referenceByIndex(index);
-}
-
-void NativeDefinedAtomV1::incrementIterator(const void*& it) const {
-  uintptr_t index = reinterpret_cast<uintptr_t>(it);
-  ++index;
-  it = reinterpret_cast<const void*>(index);
+range<const Reference * const *> NativeDefinedAtomV1::references() const {
+  range<const Reference * const *> r(_file->_references);
+  return r.slice(_ivarData->referencesStartIndex, _ivarData->referencesStartIndex + _ivarData->referencesCount);
 }
 
 inline const class lld::File& NativeUndefinedAtomV1::file() const {

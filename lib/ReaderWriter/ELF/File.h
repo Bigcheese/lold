@@ -498,7 +498,8 @@ public:
 
     // All the Atoms and References are created.  Now update each Reference's
     // target with the Atom pointer it refers to.
-    for (auto &ri : _references) {
+    for (auto r : _references) {
+      auto ri = static_cast<ELFReference<ELFT> *>(r);
       if (ri->kind() >= lld::Reference::kindTargetLow) {
         const Elf_Sym *Symbol = _objFile->getElfSymbol(ri->targetSymbolIndex());
         const Elf_Shdr *shdr = _objFile->getSection(Symbol);

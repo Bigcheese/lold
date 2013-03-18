@@ -77,7 +77,7 @@ public:
   virtual void perform(MutableFile &mf) {
     // Process all references.
     for (const auto &atom : mf.defined())
-      for (const auto &ref : *atom)
+      for (const auto ref : atom->references())
         handleReference(*atom, *ref);
 
     // Add all created atoms to the link.

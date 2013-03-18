@@ -30,7 +30,7 @@ void StubsPass::perform(MutableFile &mergedFile) {
 
   // Scan all references in all atoms.
   for(const DefinedAtom *atom : mergedFile.defined()) {
-    for (const Reference *ref : *atom) {
+    for (const Reference *ref : atom->references()) {
       // Look at call-sites.
       if (this->isCallSite(ref->kind()) ) {
         const Atom* target = ref->target();

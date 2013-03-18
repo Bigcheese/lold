@@ -109,7 +109,7 @@ ErrorOr<void> X86_64TargetRelocationHandler::applyRelocation(
   }
   case LLD_R_X86_64_GOTRELINDEX: {
     const DefinedAtom *target = cast<const DefinedAtom>(ref.target());
-    for (const Reference *r : *target) {
+    for (const Reference *r : target->references()) {
       if (r->kind() == R_X86_64_JUMP_SLOT) {
         uint32_t index;
         if (!_targetInfo.getTargetHandler<X86_64ELFType>().targetLayout()

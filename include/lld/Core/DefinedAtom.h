@@ -11,6 +11,7 @@
 #define LLD_CORE_DEFINED_ATOM_H
 
 #include "lld/Core/Atom.h"
+#include "lld/Core/range.h"
 #include "lld/Core/Reference.h"
 
 namespace llvm {
@@ -260,40 +261,7 @@ public:
   /// content.
   virtual ArrayRef<uint8_t> rawContent() const = 0;
 
-  /// This class abstracts iterating over the sequence of References
-  /// in an Atom.  Concrete instances of DefinedAtom must implement
-  /// the derefIterator() and incrementIterator() methods.
-  class reference_iterator {
-  public:
-    reference_iterator(const DefinedAtom &a, const void *it)
-      : _atom(a), _it(it) { }
-
-    const Reference *operator*() const {
-      return _atom.derefIterator(_it);
-    }
-
-    const Reference *operator->() const {
-      return _atom.derefIterator(_it);
-    }
-
-    bool operator!=(const reference_iterator &other) const {
-      return _it != other._it;
-    }
-
-    reference_iterator &operator++() {
-      _atom.incrementIterator(_it);
-      return *this;
-    }
-  private:
-    const DefinedAtom &_atom;
-    const void *_it;
-  };
-
-  /// \brief Returns an iterator to the beginning of this Atom's References.
-  virtual reference_iterator begin() const = 0;
-
-  /// \brief Returns an iterator to the end of this Atom's References.
-  virtual reference_iterator end() const = 0;
+  virtual range<const Reference * const *> references() const = 0;
 
   static inline bool classof(const Atom *a) {
     return a->definition() == definitionRegular;
@@ -312,14 +280,6 @@ protected:
   // an Atom.  In fact, some File objects may bulk allocate an array of Atoms,
   // so they cannot be individually deleted by anyone.
   virtual ~DefinedAtom() {}
-
-  /// \brief Returns a pointer to the Reference object that the abstract
-  /// iterator "points" to.
-  virtual const Reference *derefIterator(const void *iter) const = 0;
-
-  /// \brief Adjusts the abstract iterator to "point" to the next Reference
-  /// object for this Atom.
-  virtual void incrementIterator(const void *&iter) const = 0;
 };
 } // end namespace lld
 

@@ -83,7 +83,7 @@ public:
         buildDuplicateNameMap(*atom);
 
       // Find references to unnamed atoms and create ref-names for them.
-      for (const lld::Reference *ref : *atom) {
+      for (const auto ref : atom->references()) {
         // create refname for any unnamed reference target
         const lld::Atom *target = ref->target();
         if ((target != nullptr) && target->name().empty()) {
@@ -784,8 +784,8 @@ struct MappingTraits<const lld::Reference*> {
         _targetName(targetName(io, ref)),
         _offset(ref->offsetInAtom()),
         _addend(ref->addend()),
-        _mappedKind(ref->kind()) {
-    }
+        _mappedKind(ref->kind()) {}
+
 
     const lld::Reference *denormalize(IO &io) {
       ContextInfo *info = reinterpret_cast<ContextInfo*>(io.getContext());
@@ -858,12 +858,12 @@ struct MappingTraits<const lld::DefinedAtom*> {
         _permissions(atom->permissions()),
         _size(atom->size()),
         _sectionName(atom->customSectionName()) {
-          for ( const lld::Reference *r : *atom )
-            _references.push_back(r);
-          ArrayRef<uint8_t> cont = atom->rawContent();
-          _content.reserve(cont.size());
-          for (uint8_t x : cont)
-              _content.push_back(x);
+      for (const auto r : atom->references())
+        _references.push_back(r);
+      ArrayRef<uint8_t> cont = atom->rawContent();
+      _content.reserve(cont.size());
+      for (uint8_t x : cont)
+        _content.push_back(x);
     }
     const lld::DefinedAtom *denormalize(IO &io) {
       ContextInfo *info = reinterpret_cast<ContextInfo*>(io.getContext());
@@ -913,25 +913,8 @@ struct MappingTraits<const lld::DefinedAtom*> {
 
     virtual uint64_t           ordinal() const       { return _ordinal; }
 
-    reference_iterator begin() const {
-      uintptr_t index = 0;
-      const void *it = reinterpret_cast<const void*>(index);
-      return reference_iterator(*this, it);
-    }
-    reference_iterator end() const {
-      uintptr_t index = _references.size();
-      const void *it = reinterpret_cast<const void*>(index);
-      return reference_iterator(*this, it);
-    }
-    const lld::Reference *derefIterator(const void *it) const {
-      uintptr_t index = reinterpret_cast<uintptr_t>(it);
-      assert(index < _references.size());
-      return _references[index];
-    }
-    void incrementIterator(const void *&it) const {
-      uintptr_t index = reinterpret_cast<uintptr_t>(it);
-      ++index;
-      it = reinterpret_cast<const void*>(index);
+    virtual range<const Reference * const *> references() const {
+      return _references;
     }
 
     const lld::File          &_file;
