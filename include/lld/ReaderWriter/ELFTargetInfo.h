@@ -21,6 +21,7 @@
 #include "llvm/Support/ELF.h"
 
 #include <memory>
+#include <mutex>
 
 namespace lld {
 class DefinedAtom;
@@ -95,6 +96,7 @@ protected:
   mutable std::unique_ptr<Reader> _elfReader;
   mutable std::unique_ptr<Reader> _linkerScriptReader;
   mutable std::unique_ptr<Writer> _writer;
+  mutable std::mutex _readerInitMutex;
 };
 } // end namespace lld
 
