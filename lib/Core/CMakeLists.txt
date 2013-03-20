@@ -9,4 +9,5 @@ add_lld_library(lldCore
   Resolver.cpp
   SymbolTable.cpp
   TargetInfo.cpp
+  ThreadPool.cpp
   )
