@@ -72,6 +72,7 @@ ErrorOr<Reader &> ELFTargetInfo::getReader(const LinkerInput &input) const {
   auto magic = llvm::sys::fs::identify_magic(buffer->getBuffer());
   // Assume unknown file types are linker scripts.
   if (magic == llvm::sys::fs::file_magic::unknown) {
+    std::lock_guard<std::mutex> lock(_readerInitMutex);
     if (!_linkerScriptReader)
       _linkerScriptReader.reset(new ReaderLinkerScript(
           *this,
@@ -80,6 +81,7 @@ ErrorOr<Reader &> ELFTargetInfo::getReader(const LinkerInput &input) const {
   }
 
   // Assume anything else is an ELF file.
+  std::lock_guard<std::mutex> lock(_readerInitMutex);
   if (!_elfReader)
     _elfReader = createReaderELF(*this, std::bind(&ELFTargetInfo::getReader,
                                                   this, std::placeholders::_1));

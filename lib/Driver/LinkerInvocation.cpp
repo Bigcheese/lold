@@ -12,6 +12,7 @@
 #include "lld/Core/InputFiles.h"
 #include "lld/Core/PassManager.h"
 #include "lld/Core/Resolver.h"
+#include "lld/Core/ThreadPool.h"
 #include "lld/ReaderWriter/ELFTargetInfo.h"
 #include "lld/ReaderWriter/Reader.h"
 #include "lld/ReaderWriter/Writer.h"
@@ -49,31 +50,41 @@ void LinkerInvocation::operator()() {
   }
 
   // Read inputs
+  std::vector<std::vector<std::unique_ptr<File>>> files(_options._input.size());
+  {
+    std::mutex inputsMutex;
+    ThreadPool readPool;
+    std::size_t index = 0;
+    for (const auto &input : _options._input) {
+      readPool.enqueue([&, index]() mutable {
+        auto reader = targetInfo->getReader(input);
+        if (error_code ec = reader) {
+          llvm::errs() << "Failed to get reader for: " << input.getPath() << ": "
+                        << ec.message() << "\n";
+          return;
+        }
+
+        auto buffer = input.getBuffer();
+        if (error_code ec = buffer) {
+          llvm::errs() << "Failed to read file: " << input.getPath() << ": "
+                        << ec.message() << "\n";
+          return;
+        }
+
+        if (llvm::error_code ec = reader->readFile(
+              buffer->getBufferIdentifier(), files[index])) {
+          std::lock_guard<std::mutex> lock(inputsMutex);
+          llvm::errs() << "Failed to read file: " << input.getPath() << ": "
+                        << ec.message() << "\n";
+          return;
+        }
+      });
+      ++index;
+    }
+  } // sync with thread pool.
   InputFiles inputs;
-  for (const auto &input : _options._input) {
-    auto reader = targetInfo->getReader(input);
-    if (error_code ec = reader) {
-      llvm::errs() << "Failed to get reader for: " << input.getPath() << ": "
-                    << ec.message() << "\n";
-      return;
-    }
-
-    auto buffer = input.getBuffer();
-    if (error_code ec = buffer) {
-      llvm::errs() << "Failed to read file: " << input.getPath() << ": "
-                    << ec.message() << "\n";
-      return;
-    }
-
-    std::vector<std::unique_ptr<File>> files;
-    if (llvm::error_code ec = reader->readFile(
-          buffer->getBufferIdentifier(), files)) {
-      llvm::errs() << "Failed to read file: " << input.getPath() << ": "
-                    << ec.message() << "\n";
-      return;
-    }
-    inputs.appendFiles(files);
-  }
+  for (auto &f : files)
+    inputs.appendFiles(f);
   inputs.assignFileOrdinals();
 
   auto writer = targetInfo->getWriter();
