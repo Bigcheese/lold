@@ -20,6 +20,8 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <unordered_map>
+
 using namespace lld;
 
 namespace {
@@ -53,7 +55,12 @@ void LinkerInvocation::operator()() {
   std::vector<std::vector<std::unique_ptr<File>>> files(_options._input.size());
   {
     std::mutex inputsMutex;
+    std::mutex undefMutex;
+    /// \brief If an entry exists in here, 
+    // std::unordered_set<StringRef> undefSearchState;
     ThreadPool readPool;
+    for (const auto &input : _options._input) {
+    }
     std::size_t index = 0;
     for (const auto &input : _options._input) {
       readPool.enqueue([&, index]() mutable {
@@ -71,8 +78,7 @@ void LinkerInvocation::operator()() {
           return;
         }
 
-        if (llvm::error_code ec = reader->readFile(
-              buffer->getBufferIdentifier(), files[index])) {
+        if (llvm::error_code ec = reader->parseFile(std::unique_ptr<MemoryBuffer>(MemoryBuffer::getMemBuffer(buffer->getBuffer(), buffer->getBufferIdentifier())), files[index])) {
           std::lock_guard<std::mutex> lock(inputsMutex);
           llvm::errs() << "Failed to read file: " << input.getPath() << ": "
                         << ec.message() << "\n";
