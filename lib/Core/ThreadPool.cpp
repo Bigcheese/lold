@@ -15,14 +15,24 @@ ThreadPool::ThreadPool(std::size_t threadCount)
   // Spawn all but one of the threads in another thread as spawning threads can
   // take a while.
   _workers[0] = std::thread([&, threadCount] {
-    for (std::size_t i = 1; i < threadCount && !_stop; ++i)
+    for (std::size_t i = 1; i < threadCount; ++i) {
+      std::unique_lock<std::mutex> lock(_mutex);
+      if (_stop && _workQueue.empty())
+        break;
+      lock.unlock();
       _workers[i] = std::thread([=] {work();});
+    }
     _initalized = true;
     work();
   });
 }
 
 ThreadPool::~ThreadPool() {
+  if (!_stop)
+    sync();
+}
+
+void ThreadPool::sync() {
   _stop = true;
   _cond.notify_all();
   while (!_initalized)

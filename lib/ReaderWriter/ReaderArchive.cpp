@@ -15,6 +15,9 @@
 #include "llvm/ADT/Hashing.h"
 #include "llvm/Object/ObjectFile.h"
 
+#include <atomic>
+#include <condition_variable>
+#include <mutex>
 #include <unordered_map>
 
 namespace lld {
@@ -31,20 +34,26 @@ public:
     if (member == _symbolMemberMap.end())
       return nullptr;
 
-    llvm::object::Archive::child_iterator ci = member->second;
-
+    auto &child = member->second;
+    std::unique_lock<std::mutex> lock(*child._mutex);
     if (dataSymbolOnly) {
       OwningPtr<MemoryBuffer> buff;
-      if (ci->getMemoryBuffer(buff, true))
+      if (child._childIterator->getMemoryBuffer(buff, true))
         return nullptr;
       if (isDataSymbol(buff.take(), name))
         return nullptr;
     }
 
+    // Check if the file is already being read.
+    if (child._file) {
+      return child._file;
+    }
+
+    // Read it.
     std::vector<std::unique_ptr<File>> result;
 
     OwningPtr<MemoryBuffer> buff;
-    if (ci->getMemoryBuffer(buff, true))
+    if (child._childIterator->getMemoryBuffer(buff, true))
       return nullptr;
     LinkerInput li(std::unique_ptr<MemoryBuffer>(buff.take()));
     if (_getReader(li)->parseFile(li.takeBuffer(), result))
@@ -52,10 +61,12 @@ public:
 
     assert(result.size() == 1);
 
+    std::unique_lock<std::mutex> ordLock(_curChildOrdMutex);
     result[0]->setOrdinalAndIncrement(_curChildOrd);
+    ordLock.unlock();
 
     // give up the pointer so that this object no longer manages it
-    return result[0].release();
+    return child._file = result[0].release();
   }
 
   virtual void setOrdinalAndIncrement(uint64_t &ordinal) const {
@@ -128,6 +139,44 @@ private:
   atom_collection_vector<SharedLibraryAtom> _sharedLibraryAtoms;
   atom_collection_vector<AbsoluteAtom>      _absoluteAtoms;
   mutable uint64_t _curChildOrd;
+  mutable std::mutex _curChildOrdMutex;
+  
+  struct ChildEntry {
+    ChildEntry() : _file(nullptr) {}
+
+    ChildEntry(llvm::object::Archive::child_iterator ci)
+        : _childIterator(ci), _file(nullptr), _mutex(new std::mutex) {}
+
+    ChildEntry(ChildEntry &&other)
+        : _childIterator(other._childIterator),
+          _file(other._file),
+          _mutex(std::move(other._mutex)) {}
+
+    ChildEntry &operator =(ChildEntry &&other) {
+      _childIterator = other._childIterator;
+      _file = other._file;
+      std::swap(_mutex, other._mutex);
+      return *this;
+    }
+    
+    llvm::object::Archive::child_iterator _childIterator;
+    /// \brief If the child has already been read, this is set to the file that
+    ///   was read.
+    const File * _file;
+    /// \brief Mutex for when the file is currently being read.
+    std::unique_ptr<std::mutex> _mutex;
+
+  private:
+    ChildEntry(const ChildEntry &) {
+      llvm_unreachable("MSVC fails at properly dealing with move semantics ;/");
+    }
+
+    ChildEntry &operator =(const ChildEntry &) {
+      llvm_unreachable("MSVC fails at properly dealing with move semantics ;/");
+    }
+  };
+
+  mutable std::unordered_map<StringRef, ChildEntry> _symbolMemberMap;
 
 public:
   /// only subclasses of ArchiveLibraryFile can be instantiated
@@ -151,11 +200,9 @@ public:
         return;
       if ((ec = i->getMember(member)))
         return;
-      _symbolMemberMap[name] = member;
+      _symbolMemberMap[name] = ChildEntry(member);
     }
   }
-
-  std::unordered_map<StringRef, llvm::object::Archive::child_iterator> _symbolMemberMap;
 }; // class FileArchive
 
 // Returns a vector of Files that are contained in the archive file

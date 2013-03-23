@@ -39,6 +39,8 @@ public:
     _cond.notify_one();
   }
 
+  void sync();
+
 private:
   void work();
 
