@@ -121,7 +121,7 @@ public:
 
   ELFFile(const ELFTargetInfo &ti, std::unique_ptr<llvm::MemoryBuffer> MB,
           llvm::error_code &EC)
-      : File(MB->getBufferIdentifier(), kindObject), _elfTargetInfo(ti) {
+      : File(MB->getBufferIdentifier(), kindObject), _readerStorage(4096 * 4), _elfTargetInfo(ti) {
     llvm::OwningPtr<llvm::object::Binary> binaryFile;
     EC = createBinary(MB.release(), binaryFile);
     if (EC)
