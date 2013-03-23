@@ -58,9 +58,7 @@ void LinkerInvocation::operator()() {
     std::mutex undefMutex;
     /// \brief If an entry exists in here, 
     // std::unordered_set<StringRef> undefSearchState;
-    ThreadPool readPool;
-    for (const auto &input : _options._input) {
-    }
+    ThreadPool readPool(std::min<size_t>(files.size(), std::thread::hardware_concurrency()));
     std::size_t index = 0;
     for (const auto &input : _options._input) {
       readPool.enqueue([&, index]() mutable {

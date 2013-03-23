@@ -16,6 +16,7 @@ void *__uncaught_exception() { return nullptr; }
 }
 #endif
 
+#include <atomic>
 #include <cassert>
 #include <condition_variable>
 #include <queue>
@@ -45,7 +46,8 @@ private:
   std::queue<std::function<void()>> _workQueue;
   std::mutex _mutex;
   std::condition_variable _cond;
-  bool _stop;
+  std::atomic<bool> _stop;
+  std::atomic<bool> _initalized;
 };
 } // end namespace lld
 

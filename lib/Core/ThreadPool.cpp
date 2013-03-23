@@ -10,25 +10,32 @@
 #include "lld/Core/ThreadPool.h"
 
 namespace lld {
-ThreadPool::ThreadPool(std::size_t threadCount) : _stop(false) {
-  for (std::size_t i = 0; i < threadCount; ++i)
-    _workers.push_back(std::thread([=]{work();}));
+ThreadPool::ThreadPool(std::size_t threadCount)
+    : _workers(threadCount), _stop(false), _initalized(false) {
+  // Spawn all but one of the threads in another thread as spawning threads can
+  // take a while.
+  _workers[0] = std::thread([&, threadCount] {
+    for (std::size_t i = 1; i < threadCount && !_stop; ++i)
+      _workers[i] = std::thread([=] {work();});
+    _initalized = true;
+    work();
+  });
 }
 
 ThreadPool::~ThreadPool() {
-  std::unique_lock<std::mutex> lock(_mutex);
   _stop = true;
-  lock.unlock();
   _cond.notify_all();
+  while (!_initalized)
+    std::this_thread::yield();
   for (auto &worker : _workers)
-    worker.join();
+    if (worker.joinable())
+      worker.join();
 }
 
 void ThreadPool::work() {
   while (true) {
     std::unique_lock<std::mutex> lock(_mutex);
-    while (!_stop && _workQueue.empty())
-      _cond.wait(lock);
+    _cond.wait(lock, [&] {return _stop || !_workQueue.empty();});
     if (_stop && _workQueue.empty())
       return;
     auto task = _workQueue.front();
