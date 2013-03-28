@@ -31,12 +31,19 @@ public:
   ThreadPool(std::size_t threadCount = std::thread::hardware_concurrency());
   ~ThreadPool();
 
+  void sync();
+
   void enqueue(std::function<void()> f) {
     std::unique_lock<std::mutex> lock(_mutex);
     assert(!_stop && "Cannot add task to stopped thread pool!");
     _workQueue.push(f);
     lock.unlock();
     _cond.notify_one();
+  }
+
+  static ThreadPool &getDefault() {
+    static ThreadPool tp;
+    return tp;
   }
 
 private:

@@ -15,6 +15,7 @@
 #include "TargetLayout.h"
 #include "ExecutableAtoms.h"
 
+#include "lld/Core/ThreadPool.h"
 #include "lld/ReaderWriter/ELFTargetInfo.h"
 
 #include "llvm/ADT/StringSet.h"
@@ -137,7 +138,8 @@ void OutputELFWriter<ELFT>::buildStaticSymbolTable(const File &file) {
   for (auto sec : _layout->sections())
     if (auto section = dyn_cast<AtomSection<ELFT>>(sec))
       for (const auto &atom : section->atoms())
-        _symtab->addSymbol(atom->_atom, section->ordinal(), atom->_virtualAddr);
+        if (cast<const DefinedAtom>(atom->_atom)->scope() == DefinedAtom::scopeGlobal)
+          _symtab->addSymbol(atom->_atom, section->ordinal(), atom->_virtualAddr);
   for (auto &atom : _layout->absoluteAtoms())
     _symtab->addSymbol(atom->_atom, ELF::SHN_ABS, atom->_virtualAddr);
   for (const UndefinedAtom *a : file.undefined())
@@ -338,8 +340,18 @@ error_code OutputELFWriter<ELFT>::writeFile(const File &file, StringRef path) {
   _Header->write(this, *buffer);
   _programHeader->write(this, *buffer);
 
-  for (auto section : _layout->sections())
-    section->write(this, *buffer);
+  auto &pool = ThreadPool::getDefault();
+  std::atomic<size_t> barrier(0);
+  for (auto section : _layout->sections()) {
+    ++barrier;
+    pool.enqueue([&] {
+      section->write(this, *buffer);
+      --barrier;
+    });
+  }
+
+  while (barrier)
+    std::this_thread::yield();
 
   return buffer->commit();
 }

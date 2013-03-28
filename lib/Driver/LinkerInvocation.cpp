@@ -22,6 +22,8 @@
 
 #include <unordered_map>
 
+#include <Windows.h>
+
 using namespace lld;
 
 namespace {
@@ -31,6 +33,8 @@ std::unique_ptr<TargetInfo> createTargetInfo(const LinkerOptions &lo) {
 }
 
 void LinkerInvocation::operator()() {
+  // Start the thread pool.
+  ThreadPool &readPool = ThreadPool::getDefault();
   // Honor -mllvm
   if (!_options._llvmArgs.empty()) {
     unsigned NumArgs = _options._llvmArgs.size();
@@ -53,39 +57,42 @@ void LinkerInvocation::operator()() {
 
   // Read inputs
   std::vector<std::vector<std::unique_ptr<File>>> files(_options._input.size());
-  {
-    std::mutex inputsMutex;
-    std::mutex undefMutex;
-    /// \brief If an entry exists in here, 
-    // std::unordered_set<StringRef> undefSearchState;
-    ThreadPool readPool(std::min<size_t>(files.size(), std::thread::hardware_concurrency()));
-    std::size_t index = 0;
-    for (const auto &input : _options._input) {
-      readPool.enqueue([&, index]() mutable {
-        auto reader = targetInfo->getReader(input);
-        if (error_code ec = reader) {
-          llvm::errs() << "Failed to get reader for: " << input.getPath() << ": "
-                        << ec.message() << "\n";
-          return;
-        }
+  std::mutex inputsMutex;
+  std::size_t index = 0;
+  std::atomic<size_t> barrier(0);
+  for (const auto &input : _options._input) {
+    ++barrier;
+    readPool.enqueue([&, index]() mutable {
+      auto reader = targetInfo->getReader(input);
+      if (error_code ec = reader) {
+        llvm::errs() << "Failed to get reader for: " << input.getPath() << ": "
+                      << ec.message() << "\n";
+        --barrier;
+        return;
+      }
 
-        auto buffer = input.getBuffer();
-        if (error_code ec = buffer) {
-          llvm::errs() << "Failed to read file: " << input.getPath() << ": "
-                        << ec.message() << "\n";
-          return;
-        }
+      auto buffer = input.getBuffer();
+      if (error_code ec = buffer) {
+        llvm::errs() << "Failed to read file: " << input.getPath() << ": "
+                      << ec.message() << "\n";
+        --barrier;
+        return;
+      }
 
-        if (llvm::error_code ec = reader->parseFile(std::unique_ptr<MemoryBuffer>(MemoryBuffer::getMemBuffer(buffer->getBuffer(), buffer->getBufferIdentifier())), files[index])) {
-          std::lock_guard<std::mutex> lock(inputsMutex);
-          llvm::errs() << "Failed to read file: " << input.getPath() << ": "
-                        << ec.message() << "\n";
-          return;
-        }
-      });
-      ++index;
-    }
-  } // sync with thread pool.
+      if (llvm::error_code ec = reader->parseFile(std::unique_ptr<MemoryBuffer>(MemoryBuffer::getMemBuffer(buffer->getBuffer(), buffer->getBufferIdentifier())), files[index])) {
+        std::lock_guard<std::mutex> lock(inputsMutex);
+        llvm::errs() << "Failed to read file: " << input.getPath() << ": "
+                      << ec.message() << "\n";
+        --barrier;
+        return;
+      }
+      --barrier;
+    });
+    ++index;
+  }
+  // sync
+  while (barrier != 0)
+    std::this_thread::yield();
   InputFiles inputs;
   for (auto &f : files)
     inputs.appendFiles(f);
@@ -111,4 +118,7 @@ void LinkerInvocation::operator()() {
 
   if (error_code ec = writer->writeFile(merged, _options._outputPath))
     llvm::errs() << "Failed to write file: " << ec.message() << "\n";
+
+  ExitProcess(0);
+  readPool.sync();
 }

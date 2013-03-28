@@ -23,6 +23,11 @@ ThreadPool::ThreadPool(std::size_t threadCount)
 }
 
 ThreadPool::~ThreadPool() {
+  if (!_stop)
+    sync();
+}
+
+void ThreadPool::sync() {
   _stop = true;
   _cond.notify_all();
   while (!_initalized)
