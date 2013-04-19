@@ -14,6 +14,7 @@
 #include "llvm/ADT/Hashing.h"
 #include "llvm/Object/ObjectFile.h"
 
+#include <mutex>
 #include <unordered_map>
 
 namespace lld {
@@ -30,7 +31,11 @@ public:
     if (member == _symbolMemberMap.end())
       return nullptr;
 
-    llvm::object::Archive::child_iterator ci = member->second;
+    std::lock_guard<std::mutex> lock(*member->second._mutex);
+    if (member->second._file)
+      return member->second._file;
+    
+    llvm::object::Archive::child_iterator ci = member->second._child;
 
     if (dataSymbolOnly) {
       OwningPtr<MemoryBuffer> buff;
@@ -56,7 +61,7 @@ public:
     result[0]->setOrdinalAndIncrement(_curChildOrd);
 
     // give up the pointer so that this object no longer manages it
-    return result[0].release();
+    return member->second._file = result[0].release();
   }
 
   virtual void setOrdinalAndIncrement(uint64_t &ordinal) const {
@@ -153,8 +158,31 @@ public:
     }
   }
 
-  std::unordered_map<StringRef,
-                     llvm::object::Archive::child_iterator> _symbolMemberMap;
+  struct Member {
+    Member() {}
+
+    Member(llvm::object::Archive::child_iterator ci)
+        : _child(ci), _file(nullptr), _mutex(new std::mutex) {}
+    
+    Member(Member &&other)
+        : _child(other._child),
+          _file(other._file),
+          _mutex(std::move(other._mutex)) {}
+
+    Member &operator=(Member &&other) {
+      _child = other._child;
+      _file = other._file;
+      _mutex = std::move(other._mutex);
+      return *this;
+    }
+
+    llvm::object::Archive::child_iterator _child;
+    const File *_file;
+    std::unique_ptr<std::mutex> _mutex;
+  };
+
+  mutable std::unordered_map<StringRef,
+                             Member> _symbolMemberMap;
 }; // class FileArchive
 
 // Returns a vector of Files that are contained in the archive file

@@ -9,6 +9,8 @@
 
 #include "lld/Driver/Driver.h"
 
+#include "lld/Core/ArchiveLibraryFile.h"
+#include "lld/Core/ConcurrentUnorderedSet.h"
 #include "lld/Core/LLVM.h"
 #include "lld/Core/InputFiles.h"
 #include "lld/Core/Instrumentation.h"
@@ -70,6 +72,57 @@ bool Driver::link(const TargetInfo &targetInfo, raw_ostream &diagnostics) {
 
   if (fail)
     return true;
+
+  ScopedTask specReadTask(getDefaultDomain(), "Read Specutively");
+  // Get list of archives.
+  std::vector<const ArchiveLibraryFile *> archives;
+  for (auto &f : files)
+    for (auto &file : f)
+      if (const ArchiveLibraryFile *a = dyn_cast<ArchiveLibraryFile>(file.get()))
+        archives.push_back(a);
+
+  {
+    ConcurrentUnorderedSet<StringRef> symbols;
+
+    // Fill in already defined symbols.
+    for (auto &f : files)
+      for (auto &file : f)
+        for (const auto &atom : file->defined())
+          symbols.insert(atom->name());
+
+    std::function<void (const File *)> lookup;
+    lookup = [&] (const File *f) {
+      for (const auto &atom : f->undefined()) {
+        tg.spawn([&, atom] {
+        // Lookup atom in the table. Skip if it already exists.
+        if (!symbols.insert(atom->name()).second)
+          return;
+        for (auto arch : archives) {
+          // Search archives in a separate task. Ideally we would only spawn a
+          // task when we know the given archive has the symbol.
+          //tg.spawn([&, arch, atom] {
+            auto fi = arch->find(atom->name(), false);
+            if (fi) {
+              // Fill in new defined.
+              for (const auto &atom : fi->defined())
+                symbols.insert(atom->name());
+              // Lookup new undefined.
+              lookup(fi);
+              break;
+            }
+          //});
+        }
+      });
+      }
+    };
+
+    // Specutively load files.
+    for (auto &f : files)
+      for (auto &file : f)
+        tg.spawn(std::bind(lookup, file.get()));
+    tg.sync();
+    specReadTask.end();
+  }
 
   InputFiles inputs;
   for (auto &f : files)
