@@ -65,3 +65,5 @@ def emit_yaml : Flag<["-"], "emit-yaml">,
     HelpText<"Write YAML instead of ELF">;
 def force_load : Flag<["--"], "force-load">,
     HelpText<"Force load of all members in all static libraries">;
+def thread_count : Separate<["--"], "thread-count">,
+    HelpText<"Maximum number of concurrently running tasks">;

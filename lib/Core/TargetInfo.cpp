@@ -22,7 +22,7 @@ TargetInfo::TargetInfo()
       _warnIfCoalesableAtomsHaveDifferentLoadName(false),
       _forceLoadAllArchives(false), _printRemainingUndefines(true),
       _allowRemainingUndefines(false), _logInputFiles(false),
-      _allowShlibUndefines(false) {}
+      _allowShlibUndefines(false), _maxConcurrency(0) {}
 
 TargetInfo::~TargetInfo() {}
 

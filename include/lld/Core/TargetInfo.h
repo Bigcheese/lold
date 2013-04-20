@@ -174,6 +174,11 @@ public:
     return _logInputFiles;
   }
 
+  /// \brief Maximum number of concurrent tasks.
+  unsigned maxConcurrency() const {
+    return _maxConcurrency;
+  }
+
   /// Parts of LLVM use global variables which are bound to command line
   /// options (see llvm::cl::Options). This method returns "command line"
   /// options which are used to configure LLVM's command line settings.
@@ -226,6 +231,9 @@ public:
   }
   void setLogInputFiles(bool log) {
     _logInputFiles = log;
+  }
+  void setMaxConcurrency(unsigned c) {
+    _maxConcurrency = c;
   }
   void appendInputFile(StringRef path) {
     _inputFiles.emplace_back(LinkerInput(path));
@@ -336,6 +344,7 @@ protected:
   bool                     _allowRemainingUndefines;
   bool                     _logInputFiles;
   bool                     _allowShlibUndefines;
+  unsigned                 _maxConcurrency;
   std::vector<StringRef>   _deadStripRoots;
   std::vector<LinkerInput> _inputFiles;
   std::vector<const char*> _llvmOptions;

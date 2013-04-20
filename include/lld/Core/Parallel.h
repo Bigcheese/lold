@@ -78,12 +78,27 @@ public:
   virtual void add(std::function<void()> func) = 0;
 };
 
+namespace detail {
+  inline unsigned &getDefaultExecutorMaxConcurrency() {
+    static unsigned maxCur = std::thread::hardware_concurrency();
+    return maxCur;
+  }
+}
+
+inline void setDefaultExecutorMaxConcurrency(unsigned maxCur) {
+  detail::getDefaultExecutorMaxConcurrency() = maxCur;
+}
+
+inline unsigned getDefaultExecutorMaxConcurrency() {
+  return detail::getDefaultExecutorMaxConcurrency();
+}
+
 /// \brief An implementation of an Executor that runs closures on a thread pool
 ///   in filo order.
 class ThreadPoolExecutor : public Executor {
 public:
   explicit ThreadPoolExecutor(unsigned threadCount =
-                                  std::thread::hardware_concurrency())
+                              getDefaultExecutorMaxConcurrency())
       : _stop(false), _done(threadCount) {
     // Spawn all but one of the threads in another thread as spawning threads
     // can take a while.

@@ -40,6 +40,9 @@ bool Driver::link(const TargetInfo &targetInfo, raw_ostream &diagnostics) {
     llvm::cl::ParseCommandLineOptions(numArgs + 1, args);
   }
 
+  if (targetInfo.maxConcurrency())
+    setDefaultExecutorMaxConcurrency(targetInfo.maxConcurrency());
+
   // Read inputs
   std::vector<std::vector<std::unique_ptr<File>>> files(
       targetInfo.inputFiles().size());

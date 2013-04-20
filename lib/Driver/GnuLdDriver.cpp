@@ -193,6 +193,13 @@ GnuLdDriver::parse(int argc, const char *argv[], raw_ostream &diagnostics) {
   if (parsedArgs->getLastArg(OPT_use_shlib_undefs))
     options->setUseShlibUndefines(true);
 
+  // --thread-count
+  if (auto Arg = parsedArgs->getLastArg(OPT_thread_count)) {
+    unsigned maxConcurrency;
+    StringRef(Arg->getValue()).getAsInteger(10, maxConcurrency);
+    options->setMaxConcurrency(maxConcurrency);
+  }
+
   // Handle -Lxxx
   for (llvm::opt::arg_iterator it = parsedArgs->filtered_begin(OPT_L),
                                ie = parsedArgs->filtered_end();
