@@ -291,6 +291,17 @@ public:
   virtual error_code readFile(StringRef path,
                         std::vector<std::unique_ptr<File>> &result) const;
 
+  /// \brief This is a wrapper around parseFile() where the input file is
+  ///   specified by a LinkerInput object.
+  /// 
+  /// The default implementation reads the input file into a memory buffer and
+  /// calls parseFile().
+  ///
+  /// \param input object to get buffer from.
+  /// \param [out] result The instantiated lld::File object is returned here.
+  virtual error_code readFile(const LinkerInput &input, 
+                              std::vector<std::unique_ptr<File>> &result) const;
+
   /// This method is called by core linking to give the Writer a chance
   /// to add file format specific "files" to set of files to be linked. This is
   /// how file format specific atoms can be added to the link.

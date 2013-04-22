@@ -36,6 +36,19 @@ error_code TargetInfo::readFile(StringRef path,
   return this->parseFile(mb, result);
 }
 
+error_code
+TargetInfo::readFile(const LinkerInput &input,
+                     std::vector<std::unique_ptr<File>> &result) const {
+  auto buf = input.getBuffer();
+  if (!buf)
+    return buf;
+  // Make a new memory buffer that points to this memory buffer so parseFile can
+  // take ownership of it.
+  std::unique_ptr<MemoryBuffer> mb(
+      MemoryBuffer::getMemBuffer(buf->getBuffer(), buf->getBufferIdentifier()));
+  return parseFile(mb, result);
+}
+
 error_code TargetInfo::writeFile(const File &linkedFile) const {
    return this->writer().writeFile(linkedFile, _outputPath);
 }

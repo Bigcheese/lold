@@ -53,12 +53,12 @@ bool Driver::link(const TargetInfo &targetInfo, raw_ostream &diagnostics) {
   size_t index = 0;
   std::atomic<bool> fail(false);
   TaskGroup tg;
-  for (const auto &input : targetInfo.inputFiles()) {
+  for (auto &input : targetInfo.inputFiles()) {
     if (targetInfo.logInputFiles())
       llvm::outs() << input.getPath() << "\n";
 
     tg.spawn([&, index] {
-      if (error_code ec = targetInfo.readFile(input.getPath(), files[index])) {
+      if (error_code ec = targetInfo.readFile(input, files[index])) {
         diagnostics << "Failed to read file: " << input.getPath()
                     << ": " << ec.message() << "\n";
         fail = true;
