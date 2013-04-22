@@ -14,6 +14,7 @@
 
 #include "gtest/gtest.h"
 
+#include "lld/Core/ConcurrentUnorderedMap.h"
 #include "lld/Core/ConcurrentUnorderedSet.h"
 #include "lld/Core/Parallel.h"
 
@@ -77,6 +78,23 @@ TEST(Parallel, ConcurrentUnorderedSet) {
       std::uniform_int_distribution<uint32_t> dist;
       for (unsigned j = 0; j < 50; ++j) {
         cus.insert(std::to_string(j));
+      }
+    });
+  tg.sync();
+
+  EXPECT_TRUE(is_unique(cus.begin(), cus.end()));
+}
+
+TEST(Parallel, ConcurrentUnorderedMap) {
+  lld::ConcurrentUnorderedMap<std::string, unsigned> cus;
+
+  lld::TaskGroup tg;
+  for (unsigned i = 0; i < std::thread::hardware_concurrency(); ++i)
+    tg.spawn([&] {
+      std::mt19937 randEngine;
+      std::uniform_int_distribution<uint32_t> dist;
+      for (unsigned j = 0; j < 50; ++j) {
+        cus.insert(make_pair(std::to_string(j), i));
       }
     });
   tg.sync();

@@ -1,4 +1,4 @@
-//===- ConcurrentUnorderedSet.h - A lock-free unordered set ---------------===//
+//===- ConcurrentUnorderedMap.h - A lock-free unordered map ---------------===//
 //
 //                             The LLVM Linker
 //
@@ -8,7 +8,7 @@
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// \brief Implements a Split Ordered List based lock-free unordered set.
+/// \brief Implements a Split Ordered List based lock-free unordered map.
 ///
 /// The interface is modeled after the n3425 proposal:
 /// http://www.open-std.org/jtc1/sc22/wg21/docs/papers/2012/n3425.html
@@ -18,21 +18,23 @@
 ///
 //===----------------------------------------------------------------------===//
 
-#ifndef LLD_CORE_CONCURRENT_UNORDERED_SET_H
-#define LLD_CORE_CONCURRENT_UNORDERED_SET_H
+#ifndef LLD_CORE_CONCURRENT_UNORDERED_MAP_H
+#define LLD_CORE_CONCURRENT_UNORDERED_MAP_H
 
 #include "lld/Core/ConcurrentUnorderedBase.h"
 
 namespace lld {
-/// \brief A lock-free hash set.
+/// \brief A lock-free hash map.
 template <class Key,
+          class Value,
           class Hash = std::hash<Key>,
           class Pred = std::equal_to<Key>,
-          class Allocator = std::allocator<Key> >
-class ConcurrentUnorderedSet {
+          class Allocator = std::allocator<std::pair<const Key, Value>>>
+class ConcurrentUnorderedMap {
 public:
   typedef Key key_type;
-  typedef Key value_type;
+  typedef std::pair<const Key, Value> value_type;
+  typedef Value mapped_type;
   typedef Hash hasher;
   typedef Pred key_equal;
   typedef Allocator allocator_type;
@@ -51,9 +53,9 @@ private:
   };
 
   struct Node : NodeBase {
-    Node(size_type key, Key val) : NodeBase(key), _value(std::move(val)) {}
+    Node(size_type key, value_type val) : NodeBase(key), _value(std::move(val)) {}
 
-    Key _value;
+    value_type _value;
   };
 
   // Rebound allocators.
@@ -93,7 +95,7 @@ public:
   public:
     typedef std::forward_iterator_tag iterator_category;
     typedef ptrdiff_t difference_type;
-    typedef Key value_type;
+    typedef typename ConcurrentUnorderedMap::value_type value_type;
     typedef value_type &reference;
     typedef value_type *pointer;
 
@@ -125,7 +127,7 @@ public:
     }
   };
 
-  ConcurrentUnorderedSet(size_type n = 8, const hasher &h = hasher(),
+  ConcurrentUnorderedMap(size_type n = 8, const hasher &h = hasher(),
                            const key_equal &ke = key_equal(),
                            const allocator_type &a = allocator_type())
       : _list(NodeBaseAlloc(a)), _segments(), _count(0), _size(n), _hasher(h),
@@ -135,7 +137,7 @@ public:
     setBucket(0, _list._head);
   }
 
-  ~ConcurrentUnorderedSet() {
+  ~ConcurrentUnorderedMap() {
     for (unsigned i = 0; i < segmentTableSize; ++i) {
       auto buckets = _segments[i].load(std::memory_order_relaxed);
       if (!buckets)
@@ -157,7 +159,7 @@ public:
   iterator end() const { return iterator(); }
 
   std::pair<iterator, bool> insert(const value_type &val) {
-    size_type key = _hasher(val);
+    size_type key = _hasher(val.first);
     auto orderKey = soRegular(key);
     auto node = new (NodeAlloc(_alloc).allocate(1)) Node(soRegular(key), val);
     auto bucketIndex = key % _size.load(std::memory_order_relaxed);
@@ -185,7 +187,7 @@ public:
           ++cur;
           continue;
         }
-      } else if (cur->_key == orderKey && _equal(*iterator(cur), val)) {
+      } else if (cur->_key == orderKey && _equal(iterator(cur)->first, val.first)) {
         // Value already exists.
         delete node;
         return std::make_pair(*cur, false);
