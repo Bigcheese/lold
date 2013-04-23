@@ -83,6 +83,7 @@ TEST(Parallel, ConcurrentUnorderedSet) {
   tg.sync();
 
   EXPECT_TRUE(is_unique(cus.begin(), cus.end()));
+  EXPECT_EQ(std::string("42"), *cus.find("42"));
 }
 
 TEST(Parallel, ConcurrentUnorderedMap) {
@@ -94,10 +95,11 @@ TEST(Parallel, ConcurrentUnorderedMap) {
       std::mt19937 randEngine;
       std::uniform_int_distribution<uint32_t> dist;
       for (unsigned j = 0; j < 50; ++j) {
-        cus.insert(make_pair(std::to_string(j), i));
+        cus.insert(make_pair(std::to_string(j), j));
       }
     });
   tg.sync();
 
   EXPECT_TRUE(is_unique(cus.begin(), cus.end()));
+  EXPECT_EQ(42u, cus.find("42")->second);
 }
