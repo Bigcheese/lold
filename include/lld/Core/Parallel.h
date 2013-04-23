@@ -281,6 +281,88 @@ void parallel_for_each(Iterator begin, Iterator end, Func func) {
   std::for_each(begin, end, func);
 }
 #endif
+
+#ifdef _MSC_VER
+#define LLVM_THREAD_LOCAL __declspec(thread)
+#else
+#define LLVM_THREAD_LOCAL __thread
+#endif
+
+struct RegionSlab {
+  RegionSlab(std::size_t size) : _size(size), _next(nullptr) {}
+
+  /// \brief size including the RegionSlab size.
+  std::size_t _size;
+  RegionSlab *_next;
+};
+
+template <class T, class Alloc = std::allocator<char>>
+class RegionAllocator {
+public:
+  typedef T value_type;
+  typedef T *pointer;
+  typedef Alloc allocator_type;
+  typedef std::allocator_traits<allocator_type> alloc_traits;
+
+  RegionAllocator(std::size_t slabSize = 4096u, allocator_type &a = allocator_type())
+      : _owner(true), _slabs(nullptr), _slabSize(slabSize), _head(nullptr) _slabAlloc(a) {}
+
+  template <class U>
+  RegionAllocator(const RegionAllocator<U, Alloc> &other)
+      : _owner(false), _slabs(other._slabs), _slabSize(other._slabSize), _head(other._head),
+        _slabAlloc(std::allocator_traits<Alloc>::select_on_container_copy_construction(other._slabAlloc)) {}
+
+  ~RegionAllocator() {
+    if (!_owner)
+      return;
+    for (auto slab = _slabs; slab; ) {
+      auto nextSlab = slab->_next;
+      auto size = slab->_size;
+      slab->~RegionSlab();
+      alloc_traits::deallocate(_slabAlloc, slab, size);
+      slab = nextSlab;
+    }
+  }
+
+  pointer allocate(std::size_t num) {
+    if (!_slabs)
+      allocateNewSlab(_slabSize);
+
+    std::size_t size = _slabSize - std::distance(static_cast<char *>(_slabs), _head);
+    void *alignedHead = std::align(llvm::alignOf<value_type>(), num * sizeof(value_type), alignedHead, size);
+
+    if (alignedHead) {
+      // Allocation succeeded.
+      __msan_allocated_memory(alignedHead, sizeof(value_type));
+      _head = static_cast<char *>(alignedHead) + sizeof(value_type);
+      //return std::
+    }
+
+    _head = static_cast<char *>(alignedHead);
+  }
+
+private:
+  RegionSlab *allocateNewSlab(std::size_t size) {
+    auto slab = alloc_traits::allocate(_slabAlloc, size);
+    auto newSlab = new (slab) RegionSlab(size);
+    newSlab->_next = _slabs;
+    _slabs = newSlab;
+    _head = slab + sizeof(RegionSlab);
+  }
+
+  /// \brief True if this instance owns the RegionSlab chain.
+  bool _owner;
+  RegionSlab *_slabs;
+  std::size_t _slabSize;
+  typename alloc_traits::pointer _head;
+  allocator_type _slabAlloc;
+};
+
+/// \brief A lifo allocator whith a separate region per instance per thread.
+class ConcurrentRegionAllocator {
+public:
+  static LLVM_THREAD_LOCAL void *v;
+};
 } // end namespace lld
 
 #endif
