@@ -304,8 +304,8 @@ public:
   typedef Alloc allocator_type;
   typedef std::allocator_traits<allocator_type> alloc_traits;
 
-  RegionAllocator(std::size_t slabSize = 4096u, allocator_type &a = allocator_type())
-      : _owner(true), _slabs(nullptr), _slabSize(slabSize), _head(nullptr) _slabAlloc(a) {}
+  RegionAllocator(std::size_t slabSize = 4096u, const allocator_type &a = allocator_type())
+      : _owner(true), _slabs(nullptr), _slabSize(slabSize), _head(nullptr), _slabAlloc(a) {}
 
   template <class U>
   RegionAllocator(const RegionAllocator<U, Alloc> &other)
@@ -319,34 +319,58 @@ public:
       auto nextSlab = slab->_next;
       auto size = slab->_size;
       slab->~RegionSlab();
-      alloc_traits::deallocate(_slabAlloc, slab, size);
+      alloc_traits::deallocate(_slabAlloc, reinterpret_cast<char *>(slab), size);
       slab = nextSlab;
     }
   }
 
   pointer allocate(std::size_t num) {
     if (!_slabs)
-      allocateNewSlab(_slabSize);
+      insertSlab(allocateSlab(_slabSize));
 
-    std::size_t size = _slabSize - std::distance(static_cast<char *>(_slabs), _head);
-    void *alignedHead = std::align(llvm::alignOf<value_type>(), num * sizeof(value_type), alignedHead, size);
+    std::size_t allocSize = num * sizeof(value_type);
+    std::size_t slabRemaining = _slabSize - std::distance(static_cast<char *>(_slabs), _head);
+    void *alignedHead = std::align(llvm::alignOf<value_type>(), allocSize, alignedHead, slabRemaining);
 
     if (alignedHead) {
       // Allocation succeeded.
-      __msan_allocated_memory(alignedHead, sizeof(value_type));
-      _head = static_cast<char *>(alignedHead) + sizeof(value_type);
-      //return std::
+      __msan_allocated_memory(alignedHead, allocSize);
+      _head = static_cast<char *>(alignedHead) + allocSize;
+      return static_cast<pointer>(alignedHead);
     }
 
-    _head = static_cast<char *>(alignedHead);
+    // Check if it's too large for a single slab.
+    std::size_t paddedSize = llvm::RoundUpToAlignment(sizeof(RegionSlab), llvm::alignOf<value_type>()) + allocSize;
+    if (paddedSize > _slabSize) {
+      auto newSlab = allocateSlab(paddedSize);
+      // Insert the new slab behind the current slab.
+      newSlab->_next = _slabs->_next;
+      _slabs->_next = newSlab;
+      alignedHead = std::align(llvm::alignOf<value_type>(), allocSize, alignedHead, paddedSize);
+      assert(alignedHead && "Unable to allocate memory!");
+      __msan_allocated_memory(alignedHead, allocSize);
+      return static_cast<pointer>(alignedHead);
+    }
+
+    // Start a new slab and try again.
+    insertSlab(allocateSlab(_slabSize));
+    slabRemaining = _slabSize - std::distance(static_cast<char *>(_slabs), _head);
+    alignedHead = std::align(llvm::alignOf<value_type>(), allocSize, alignedHead, slabRemaining);
+    assert(alignedHead && "Unable to allocate memory!");
+    __msan_allocated_memory(alignedHead, allocSize);
+    _head = static_cast<char *>(alignedHead) + allocSize;
+    return static_cast<pointer>(alignedHead);
   }
 
 private:
-  RegionSlab *allocateNewSlab(std::size_t size) {
+  RegionSlab *allocateSlab(std::size_t size) {
     auto slab = alloc_traits::allocate(_slabAlloc, size);
-    auto newSlab = new (slab) RegionSlab(size);
-    newSlab->_next = _slabs;
-    _slabs = newSlab;
+    return new (slab) RegionSlab(size);
+  }
+
+  void insertSlab(RegionSlab *slab) {
+    slab->_next = _slabs;
+    _slabs = slab;
     _head = slab + sizeof(RegionSlab);
   }
 

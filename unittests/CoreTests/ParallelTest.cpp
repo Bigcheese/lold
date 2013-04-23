@@ -103,3 +103,7 @@ TEST(Parallel, ConcurrentUnorderedMap) {
   EXPECT_TRUE(is_unique(cus.begin(), cus.end()));
   EXPECT_EQ(42u, cus.find("42")->second);
 }
+
+TEST(Parallel, RegionAllocator) {
+  lld::RegionAllocator<int> ra;
+}
