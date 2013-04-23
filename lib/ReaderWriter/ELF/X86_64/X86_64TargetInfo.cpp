@@ -10,6 +10,7 @@
 #include "Atoms.h"
 #include "X86_64TargetInfo.h"
 
+#include "lld/Core/ConcurrentUnorderedMap.h"
 #include "lld/Core/File.h"
 #include "lld/Core/Instrumentation.h"
 #include "lld/Core/Parallel.h"
@@ -252,14 +253,10 @@ protected:
   ELFPassFile _file;
 
   /// \brief Map Atoms to their GOT entries.
-  llvm::DenseMap<const Atom *, GOTAtom *> _gotMap;
+  ConcurrentUnorderedMap<const Atom *, GOTAtom *> _gotMap;
 
   /// \brief Map Atoms to their PLT entries.
-  llvm::DenseMap<const Atom *, PLTAtom *> _pltMap;
-
-  /// \brief the list of GOT/PLT atoms
-  std::vector<GOTAtom *> _gotVector;
-  std::vector<PLTAtom *> _pltVector;
+  ConcurrentUnorderedMap<const Atom *, PLTAtom *> _pltMap;
 
   /// \brief GOT entry that is always 0. Used for undefined weaks.
   GOTAtom *_null;
