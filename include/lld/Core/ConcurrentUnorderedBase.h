@@ -337,24 +337,8 @@ public:
   }
 
 private:
-  static unsigned countLeadingZeros(uint32_t val) {
-    return llvm::CountLeadingZeros_32(val);
-  }
-
-  static unsigned countLeadingZeros(uint64_t val) {
-    return llvm::CountLeadingZeros_64(val);
-  }
-
-  /// \brief Get the index of the most significant bit. Returns 0 if none are
-  ///   set.
-  static size_type getMSBIndex(size_type v) {
-    if (!v)
-      return 0;
-    return ((sizeof(size_type) * CHAR_BIT) - countLeadingZeros(v)) - 1;
-  }
-
   static size_type getSegmentIndex(size_type bucket) {
-    return getMSBIndex(bucket);
+    return llvm::getMSBIndex(bucket);
   }
 
   static size_type getSegmentOffset(size_type seg) {
@@ -396,7 +380,7 @@ private:
 
   /// \brief Get the parent bucket of index by removing the highest set bit.
   static size_type getParentBucket(size_type index) {
-    return index & ~(1 << getMSBIndex(index));
+    return index & ~(1 << llvm::getMSBIndex(index));
   }
 
   static size_type soRegular(size_type key) {
