@@ -282,105 +282,213 @@ void parallel_for_each(Iterator begin, Iterator end, Func func) {
 }
 #endif
 
-#ifdef _MSC_VER
-#define LLVM_THREAD_LOCAL __declspec(thread)
-#else
-#define LLVM_THREAD_LOCAL __thread
-#endif
-
 struct RegionSlab {
-  RegionSlab(std::size_t size) : _size(size), _next(nullptr) {}
+  RegionSlab(std::size_t size, std::size_t alignment)
+      : _size(size),
+        _head(reinterpret_cast<char *>(this) + llvm::RoundUpToAlignment(alignment, sizeof(RegionSlab))),
+        _next(nullptr) {}
 
-  /// \brief size including the RegionSlab size.
+  std::size_t spaceRemaining() const {
+    return _size - (_head - reinterpret_cast<const char *>(this));
+  }
+
+  bool isEmpty(std::size_t alignment) const {
+    return _head == reinterpret_cast<const char *>(this) + llvm::RoundUpToAlignment(alignment, sizeof(RegionSlab));
+  }
+
+  /// \brief size including sizeof(RegionSlab). Used to pass the correct value
+  ///   to A.deallocate().
   std::size_t _size;
+
+  /// \brief Current allocation location for this slab. This is stored per slab
+  ///   to allow lifo deallocation.
+  char *_head;
+
+  /// \brief Next slab in the slab chain.
   RegionSlab *_next;
+};
+
+/// \brief Get the 0 based index of the most significant bit set in val.
+template <std::size_t val>
+struct MSBIndex;
+
+template <std::size_t val>
+struct MSBIndex {
+  static const std::size_t value = MSBIndex<(val >> 1)>::value + 1;
+};
+
+template <>
+struct MSBIndex<0> {
+  static const std::size_t value = -1;
+};
+
+template <class Alloc>
+struct RegionAllocatorState {
+  typedef Alloc allocator_type;
+  typedef std::allocator_traits<allocator_type> alloc_traits;
+
+  RegionAllocatorState(std::size_t slabSize, const allocator_type &a)
+     : _curSlab({{nullptr}}), _largeSlab(nullptr), _slabSize(slabSize), _slabAlloc(a), _bytesAllocated(0) {}
+
+  ~RegionAllocatorState() {
+    for (auto slab : _curSlab)
+      destroyChain(slab);
+    destroyChain(_largeSlab);
+  }
+
+  void *allocate(std::size_t size, std::size_t alignment) {
+    _bytesAllocated += size;
+
+    if (alignment == 0)
+      alignment = 1;
+
+    if (alignment > _curSlab.size() || size > _slabSize - llvm::RoundUpToAlignment(sizeof(RegionSlab), alignment))
+      return allocateLarge(size, alignment);
+
+    auto &slab = _curSlab[llvm::getMSBIndex(alignment)];
+
+    if (!slab)
+      slab = allocateSlab(_slabSize, alignment);
+
+  retry:
+    std::size_t spaceRemaining = slab->spaceRemaining();
+    void *alignedHead = slab->_head;
+    if (std::align(alignment, size, alignedHead, spaceRemaining)) {
+      // Allocation succeeded.
+      slab->_head = static_cast<char *>(alignedHead);
+      slab->_head += size;
+      __msan_allocated_memory(alignedHead, size);
+      return alignedHead;
+    }
+
+    // Allocate new slab and try again.
+    auto newSlab = allocateSlab(_slabSize, alignment);
+    newSlab->_next = slab;
+    slab = newSlab;
+    goto retry;
+  }
+
+  void deallocate(void *p, std::size_t size, std::size_t alignment) {
+    if (alignment == 0)
+      alignment = 1;
+
+    if (alignment > _curSlab.size() ||
+        size > _slabSize -
+               llvm::RoundUpToAlignment(sizeof(RegionSlab), alignment)) {
+      // It was allocated to _largeSlab.
+      if (!_largeSlab || static_cast<char *>(p) + size != _largeSlab->_head)
+        return; // Not the last allocation.
+      auto toRemove = _largeSlab;
+      _largeSlab = _largeSlab->_next;
+      deallocateSlab(toRemove);
+      _bytesAllocated -= size;
+      return;
+    }
+
+    auto &slab = _curSlab[llvm::getMSBIndex(alignment)];
+
+    if (!slab)
+      return;
+
+    // Check if the current slab is already empty. Delete it if so.
+    if (slab->isEmpty(alignment)) {
+      auto toRemove = slab;
+      slab = slab->_next;
+      deallocateSlab(toRemove);
+    }
+
+    if (static_cast<char *>(p) + size == slab->_head) {
+      slab->_head = static_cast<char *>(p);
+      _bytesAllocated -= size;
+    }
+  }
+
+  std::size_t bytesAllocated() const {
+    return _bytesAllocated;
+  }
+
+private:
+  void *allocateLarge(std::size_t size, std::size_t alignment) {
+    std::size_t paddedSize = llvm::RoundUpToAlignment(sizeof(RegionSlab), alignment) + size;
+    auto newSlab = allocateSlab(paddedSize, alignment);
+    newSlab->_next = _largeSlab;
+    _largeSlab = newSlab;
+    void *alignedHead = newSlab->_head;
+    alignedHead = std::align(alignment, size, alignedHead, paddedSize);
+    assert(alignedHead && "Unable to allocate memory!");
+    newSlab->_head += size;
+    __msan_allocated_memory(alignedHead, size);
+    return alignedHead;
+  }
+
+  RegionSlab *allocateSlab(std::size_t size, std::size_t alignment) {
+    auto slab = alloc_traits::allocate(_slabAlloc, size);
+    return new (slab) RegionSlab(size, alignment);
+  }
+
+  void deallocateSlab(RegionSlab *slab) {
+    auto slabSize = slab->_size;
+    slab->~RegionSlab();
+    alloc_traits::deallocate(_slabAlloc, reinterpret_cast<char *>(slab), slabSize);
+  }
+
+  void destroyChain(RegionSlab *slab) {
+    if (!slab)
+      return;
+
+    RegionSlab *next;
+    do {
+      next = slab->_next;
+      std::size_t size = slab->_size;
+      slab->~RegionSlab();
+      alloc_traits::deallocate(_slabAlloc, reinterpret_cast<char *>(slab), size);
+    } while (next);
+  }
+
+  /// \brief slab per alignment up to alignof(std::max_align_t).
+  std::array<RegionSlab *, MSBIndex<llvm::AlignOf<std::max_align_t>::Alignment>::value + 1> _curSlab;
+  RegionSlab *_largeSlab;
+  std::size_t _slabSize;
+  allocator_type _slabAlloc;
+  std::size_t _bytesAllocated;
 };
 
 template <class T, class Alloc = std::allocator<char>>
 class RegionAllocator {
 public:
   typedef T value_type;
-  typedef T *pointer;
   typedef Alloc allocator_type;
-  typedef std::allocator_traits<allocator_type> alloc_traits;
+
+  template <class OtherT, class OtherAlloc> friend class RegionAllocator;
 
   RegionAllocator(std::size_t slabSize = 4096u, const allocator_type &a = allocator_type())
-      : _owner(true), _slabs(nullptr), _slabSize(slabSize), _head(nullptr), _slabAlloc(a) {}
+      : _state(std::make_shared<RegionAllocatorState<Alloc>>(slabSize, a)) {}
 
   template <class U>
   RegionAllocator(const RegionAllocator<U, Alloc> &other)
-      : _owner(false), _slabs(other._slabs), _slabSize(other._slabSize), _head(other._head),
-        _slabAlloc(std::allocator_traits<Alloc>::select_on_container_copy_construction(other._slabAlloc)) {}
+      : _state(other._state) {}
 
-  ~RegionAllocator() {
-    if (!_owner)
-      return;
-    for (auto slab = _slabs; slab; ) {
-      auto nextSlab = slab->_next;
-      auto size = slab->_size;
-      slab->~RegionSlab();
-      alloc_traits::deallocate(_slabAlloc, reinterpret_cast<char *>(slab), size);
-      slab = nextSlab;
-    }
+  T *allocate(std::size_t num) {
+    return (T *)_state->allocate(sizeof(T) * num, llvm::alignOf<T>());
   }
 
-  pointer allocate(std::size_t num) {
-    if (!_slabs)
-      insertSlab(allocateSlab(_slabSize));
+  void deallocate(T *p, std::size_t num) {
+    _state->deallocate(p, sizeof(T) * num, llvm::alignOf<T>());
+  }
 
-    std::size_t allocSize = num * sizeof(value_type);
-    std::size_t slabRemaining = _slabSize - std::distance(static_cast<char *>(_slabs), _head);
-    void *alignedHead = std::align(llvm::alignOf<value_type>(), allocSize, alignedHead, slabRemaining);
-
-    if (alignedHead) {
-      // Allocation succeeded.
-      __msan_allocated_memory(alignedHead, allocSize);
-      _head = static_cast<char *>(alignedHead) + allocSize;
-      return static_cast<pointer>(alignedHead);
-    }
-
-    // Check if it's too large for a single slab.
-    std::size_t paddedSize = llvm::RoundUpToAlignment(sizeof(RegionSlab), llvm::alignOf<value_type>()) + allocSize;
-    if (paddedSize > _slabSize) {
-      auto newSlab = allocateSlab(paddedSize);
-      // Insert the new slab behind the current slab.
-      newSlab->_next = _slabs->_next;
-      _slabs->_next = newSlab;
-      alignedHead = std::align(llvm::alignOf<value_type>(), allocSize, alignedHead, paddedSize);
-      assert(alignedHead && "Unable to allocate memory!");
-      __msan_allocated_memory(alignedHead, allocSize);
-      return static_cast<pointer>(alignedHead);
-    }
-
-    // Start a new slab and try again.
-    insertSlab(allocateSlab(_slabSize));
-    slabRemaining = _slabSize - std::distance(static_cast<char *>(_slabs), _head);
-    alignedHead = std::align(llvm::alignOf<value_type>(), allocSize, alignedHead, slabRemaining);
-    assert(alignedHead && "Unable to allocate memory!");
-    __msan_allocated_memory(alignedHead, allocSize);
-    _head = static_cast<char *>(alignedHead) + allocSize;
-    return static_cast<pointer>(alignedHead);
+  std::size_t bytesAllocated() const {
+    return _state->bytesAllocated();
   }
 
 private:
-  RegionSlab *allocateSlab(std::size_t size) {
-    auto slab = alloc_traits::allocate(_slabAlloc, size);
-    return new (slab) RegionSlab(size);
-  }
-
-  void insertSlab(RegionSlab *slab) {
-    slab->_next = _slabs;
-    _slabs = slab;
-    _head = slab + sizeof(RegionSlab);
-  }
-
-  /// \brief True if this instance owns the RegionSlab chain.
-  bool _owner;
-  RegionSlab *_slabs;
-  std::size_t _slabSize;
-  typename alloc_traits::pointer _head;
-  allocator_type _slabAlloc;
+  std::shared_ptr<RegionAllocatorState<Alloc>> _state;
 };
+
+#ifdef _MSC_VER
+#define LLVM_THREAD_LOCAL __declspec(thread)
+#else
+#define LLVM_THREAD_LOCAL __thread
+#endif
 
 /// \brief A lifo allocator whith a separate region per instance per thread.
 class ConcurrentRegionAllocator {

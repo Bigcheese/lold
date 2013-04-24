@@ -104,6 +104,45 @@ TEST(Parallel, ConcurrentUnorderedMap) {
   EXPECT_EQ(42u, cus.find("42")->second);
 }
 
+TEST(Parallel, RegionAllocatorSimple) {
+  lld::RegionAllocator<int> ra;
+  typedef std::allocator_traits<lld::RegionAllocator<int>> traits;
+  for (unsigned i = 0; i < 1025; ++i) {
+    auto p = traits::allocate(ra, 1);
+    traits::construct(ra, p);
+    traits::destroy(ra, p);
+    traits::deallocate(ra, p, 1);
+  }
+
+  EXPECT_EQ(0u, ra.bytesAllocated());
+
+  std::vector<int *> allocs;
+  for (unsigned i = 0; i < 1025; ++i) {
+    auto p = traits::allocate(ra, 1);
+    traits::construct(ra, p);
+    allocs.push_back(p);
+  }
+
+  for (unsigned i = 0; i < 1025; ++i) {
+    auto p = allocs.back();
+    traits::destroy(ra, p);
+    traits::deallocate(ra, p, 1);
+    allocs.pop_back();
+  }
+  EXPECT_EQ(0u, ra.bytesAllocated());
+}
+
 TEST(Parallel, RegionAllocator) {
   lld::RegionAllocator<int> ra;
+  {
+    std::set<int, std::less<int>, lld::RegionAllocator<int>> s(ra);
+    s.insert(5);
+    s.erase(5);
+  }
+  {
+    std::vector<char, lld::RegionAllocator<char>> v(ra);
+    v.reserve(42);
+  }
+  // The standard makes no guarantee about what order std::set allocates and
+  // deallocates in.
 }
