@@ -60,6 +60,9 @@ public:
                          const key_equal &ke = key_equal(),
                          const allocator_type &a = allocator_type())
       : BaseType(n, h, ke, a) {}
+
+  ConcurrentUnorderedMap(const allocator_type &a)
+      : BaseType(8, hasher(), key_equal(), a) {}
 };
 } // end namespace lld
 

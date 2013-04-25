@@ -24,6 +24,12 @@
 
 #include "lld/Core/Parallel.h"
 
+#ifdef _MSC_VER
+#define LLD_REBIND_ALLOC(T) alloc_traits::template rebind_alloc<T >::other
+#else
+#define LLD_REBIND_ALLOC(T) alloc_traits::template rebind_alloc<T>
+#endif
+
 namespace lld {
 /// \brief A lock-free forward list sorted by split order.
 template <class NodeT> class SplitOrderedList {
@@ -71,10 +77,15 @@ public:
     operator NodeT *() const { return _node; }
   };
 
-  NodeT * _head;
+  NodeT *_head;
 
   template <class Alloc> SplitOrderedList(const Alloc &a) {
-    _head = new (Alloc(a).allocate(1)) NodeT(0);
+    typedef std::allocator_traits<Alloc> alloc_traits;
+    typedef typename LLD_REBIND_ALLOC(NodeT) NodeAlloc;
+    typedef std::allocator_traits<NodeAlloc> NodeAllocTraits;
+    auto alloc = NodeAlloc(a);
+    _head = NodeAllocTraits::allocate(alloc, 1);
+    NodeAllocTraits::construct(alloc, _head, 0);
   }
 
   /// \returns the last Node less than or equal to key and the node after it.
@@ -153,10 +164,12 @@ public:
   typedef typename Traits::key_equal key_equal;
   typedef typename Traits::allocator_type allocator_type;
 
-  typedef typename allocator_type::pointer pointer;
-  typedef typename allocator_type::reference reference;
-  typedef typename allocator_type::size_type size_type;
-  typedef typename allocator_type::difference_type difference_type;
+  typedef std::allocator_traits<allocator_type> alloc_traits;
+
+  typedef typename alloc_traits::pointer pointer;
+  typedef typename alloc_traits::value_type &reference;
+  typedef typename alloc_traits::size_type size_type;
+  typedef typename alloc_traits::difference_type difference_type;
 
 private:
   struct NodeBase {
@@ -173,15 +186,12 @@ private:
   };
 
   // Rebound allocators.
-#ifdef _MSC_VER
-#define LLD_REBIND_ALLOC(T) std::allocator_traits<allocator_type>::template rebind_alloc<T >::other
-#else
-#define LLD_REBIND_ALLOC(T) std::allocator_traits<allocator_type>::template rebind_alloc<T>
-#endif
   typedef typename LLD_REBIND_ALLOC(NodeBase) NodeBaseAlloc;
   typedef typename LLD_REBIND_ALLOC(Node) NodeAlloc;
   typedef typename LLD_REBIND_ALLOC(std::atomic<NodeBase *>) BucketAlloc;
-#undef LLD_REBIND_ALLOC
+  typedef std::allocator_traits<NodeBaseAlloc> NodeBaseAllocTraits;
+  typedef std::allocator_traits<NodeAlloc> NodeAllocTraits;
+  typedef std::allocator_traits<BucketAlloc> BucketAllocTraits;
 
   /// \brief The size of the segment table needs to be large enough to cover
   ///   entire address range.
@@ -260,15 +270,21 @@ public:
       auto buckets = _segments[i].load(std::memory_order_relaxed);
       if (!buckets)
         break;
-      BucketAlloc(_alloc).deallocate(buckets, getSegmentSize(i));
+      auto alloc = BucketAlloc(_alloc);
+      BucketAllocTraits::deallocate(alloc, buckets, getSegmentSize(i));
     }
 
     for (full_iterator i = _list._head, e; i != e;) {
       auto prev = i++;
-      if (prev->_key & size_type(1))
-        NodeAlloc(_alloc).deallocate(static_cast<Node *>(*prev), 1);
-      else
-        NodeBaseAlloc(_alloc).deallocate(*prev, 1);
+      if (prev->_key & size_type(1)) {
+        auto alloc = NodeAlloc(_alloc);
+        NodeAllocTraits::destroy(alloc, static_cast<Node *>(*prev));
+        NodeAllocTraits::deallocate(alloc, static_cast<Node *>(*prev), 1);
+      } else {
+        auto alloc = NodeBaseAlloc(_alloc);
+        NodeBaseAllocTraits::destroy(alloc, *prev);
+        NodeBaseAllocTraits::deallocate(alloc, *prev, 1);
+      }
     }
   }
 
@@ -279,7 +295,9 @@ public:
   std::pair<iterator, bool> insert(const value_type &val) {
     size_type key = _hasher(Traits::extractKey(val));
     auto orderKey = soRegular(key);
-    auto node = new (NodeAlloc(_alloc).allocate(1)) Node(soRegular(key), val);
+    auto alloc = NodeAlloc(_alloc);
+    auto node = NodeAllocTraits::allocate(alloc, 1);
+    NodeAllocTraits::construct(alloc, node, soRegular(key), val);
     auto bucketIndex = key % _size.load(std::memory_order_relaxed);
 
     if (!isBucketInitialized(bucketIndex))
@@ -307,7 +325,8 @@ public:
         }
       } else if (cur->_key == orderKey && _equal(Traits::extractKey(*iterator(cur)), Traits::extractKey(val))) {
         // Value already exists.
-        delete node;
+        NodeAllocTraits::destroy(alloc, node);
+        NodeAllocTraits::deallocate(alloc, node, 1);
         return std::make_pair(*cur, false);
       }
       prev = cur++;
@@ -363,7 +382,8 @@ private:
     if (!segment) {
       // Allocate a new bucket segment.
       auto segSize = getSegmentSize(seg);
-      auto buckets = BucketAlloc(_alloc).allocate(segSize);
+      auto alloc = BucketAlloc(_alloc);
+      auto buckets = BucketAllocTraits::allocate(alloc, segSize);
       // HACK: This is not the proper way to initialize an array of
       // std::atomic<T*> to nullptr, but sadly the alternatives generate
       // horrible code.
@@ -371,7 +391,7 @@ private:
                               getSegmentSize(seg));
 
       if (!_segments[seg].compare_exchange_strong(segment, buckets))
-        BucketAlloc(_alloc).deallocate(buckets, segSize);
+        BucketAllocTraits::deallocate(alloc, buckets, segSize);
       else
         segment = buckets;
     }
@@ -408,12 +428,14 @@ private:
     auto parent = getBucket(parentIndex);
 
     // Create dummy node.
-    auto dummyNode =
-        new (NodeBaseAlloc(_alloc).allocate(1)) NodeBase(soDummy(bucket));
+    auto alloc = NodeBaseAlloc(_alloc);
+    auto dummyNode = NodeBaseAllocTraits::allocate(alloc, 1);
+    NodeBaseAllocTraits::construct(alloc, dummyNode, soDummy(bucket));
     auto ins = _list.insert(parent, dummyNode);
     if (!ins.second) {
       // Another thread has already initalized this parent.
-      NodeBaseAlloc(_alloc).deallocate(dummyNode, 1);
+      NodeBaseAllocTraits::destroy(alloc, dummyNode);
+      NodeBaseAllocTraits::deallocate(alloc, dummyNode, 1);
       dummyNode = ins.first;
     }
     // The dummyNode is still stored because the thread that added it to the

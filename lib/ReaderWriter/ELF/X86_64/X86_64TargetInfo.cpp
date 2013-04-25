@@ -253,10 +253,14 @@ protected:
   ELFPassFile _file;
 
   /// \brief Map Atoms to their GOT entries.
-  ConcurrentUnorderedMap<const Atom *, GOTAtom *> _gotMap;
+  llvm::DenseMap<const Atom *, GOTAtom *> _gotMap;
 
   /// \brief Map Atoms to their PLT entries.
-  ConcurrentUnorderedMap<const Atom *, PLTAtom *> _pltMap;
+  llvm::DenseMap<const Atom *, PLTAtom *> _pltMap;
+
+  /// \brief the list of GOT/PLT atoms
+  std::vector<GOTAtom *> _gotVector;
+  std::vector<PLTAtom *> _pltVector;
 
   /// \brief GOT entry that is always 0. Used for undefined weaks.
   GOTAtom *_null;

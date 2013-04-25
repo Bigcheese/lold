@@ -14,6 +14,7 @@
 
 #include "gtest/gtest.h"
 
+#include "lld/Core/Allocators.h"
 #include "lld/Core/ConcurrentUnorderedMap.h"
 #include "lld/Core/ConcurrentUnorderedSet.h"
 #include "lld/Core/Parallel.h"
@@ -140,9 +141,35 @@ TEST(Parallel, RegionAllocator) {
     s.erase(5);
   }
   {
+    // MSVC doesn't use std::allocator_traits in the implementation of
+    // std::vector.
+#ifndef _MSC_VER
     std::vector<char, lld::RegionAllocator<char>> v(ra);
     v.reserve(42);
+#endif
   }
+  // The standard makes no guarantee about what order std::set allocates and
+  // deallocates in.
+}
+
+TEST(Parallel, ConcurrentRegionAllocator) {
+  lld::ConcurrentRegionAllocator<int> ra;
+  lld::ConcurrentUnorderedMap<int, int, std::hash<int>, std::equal_to<int>, lld::ConcurrentRegionAllocator<std::pair<int, int>>> cm(ra);
+
+  lld::TaskGroup tg;
+  for (unsigned i = 0; i < std::thread::hardware_concurrency(); ++i)
+    tg.spawn([&] {
+      std::mt19937 randEngine;
+      std::uniform_int_distribution<uint32_t> dist;
+      for (unsigned j = 0; j < 50; ++j) {
+        cm.insert(std::make_pair(j, j));
+      }
+    });
+  tg.sync();
+
+  EXPECT_TRUE(is_unique(cm.begin(), cm.end()));
+  EXPECT_EQ(42, cm.find(42)->second);
+
   // The standard makes no guarantee about what order std::set allocates and
   // deallocates in.
 }

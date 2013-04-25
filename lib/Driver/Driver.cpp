@@ -9,6 +9,7 @@
 
 #include "lld/Driver/Driver.h"
 
+#include "lld/Core/Allocators.h"
 #include "lld/Core/ArchiveLibraryFile.h"
 #include "lld/Core/ConcurrentUnorderedSet.h"
 #include "lld/Core/LLVM.h"
@@ -82,7 +83,7 @@ bool Driver::link(const TargetInfo &targetInfo, raw_ostream &diagnostics) {
         archives.push_back(a);
 
   {
-    ConcurrentUnorderedSet<StringRef> symbols;
+    ConcurrentUnorderedSet<StringRef, std::hash<StringRef>, std::equal_to<StringRef>, ConcurrentRegionAllocator<StringRef>> symbols;
 
     // Fill in already defined symbols.
     for (auto &f : files)
