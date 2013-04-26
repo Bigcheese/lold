@@ -30,6 +30,8 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FileOutputBuffer.h"
 
+#include <unordered_map>
+
 namespace {
 LLVM_ATTRIBUTE_UNUSED std::string kindOrUnknown(llvm::ErrorOr<std::string> k) {
   if (k)
@@ -518,18 +520,7 @@ public:
 private:
   std::vector<StringRef> _strings;
 
-  struct StringRefMappingInfo {
-    static StringRef getEmptyKey() { return StringRef(); }
-    static StringRef getTombstoneKey() { return StringRef(" ", 0); }
-    static unsigned getHashValue(StringRef const val) {
-      return llvm::HashString(val);
-    }
-    static bool isEqual(StringRef const lhs, StringRef const rhs) {
-      return lhs.equals(rhs);
-    }
-  };
-  typedef typename llvm::DenseMap<StringRef, uint64_t,
-                                  StringRefMappingInfo> StringMapT;
+  typedef typename std::unordered_map<StringRef, uint64_t> StringMapT;
   typedef typename StringMapT::iterator StringMapTIter;
   StringMapT _stringMap;
 };
@@ -555,17 +546,15 @@ template <class ELFT> uint64_t StringTable<ELFT>::addString(StringRef symname) {
 
   if (symname.size() == 0)
     return 0;
-  StringMapTIter stringIter = _stringMap.find(symname);
-  if (stringIter == _stringMap.end()) {
+  auto &offset = _stringMap[symname];
+  if (offset == 0) {
     _strings.push_back(symname);
-    uint64_t offset = this->_fsize;
+    offset = this->_fsize;
     this->_fsize += symname.size() + 1;
     if (this->_flags & SHF_ALLOC)
       this->_msize = this->_fsize;
-    _stringMap[symname] = offset;
-    return offset;
   }
-  return stringIter->second;
+  return offset;
 }
 
 template <class ELFT>
