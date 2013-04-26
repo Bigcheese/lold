@@ -10,6 +10,8 @@
 #ifndef LLD_CORE_ALLOCATORS_H
 #define LLD_CORE_ALLOCATORS_H
 
+extern "C" __declspec(dllimport) unsigned long __stdcall GetCurrentThreadId(void);
+
 #include "lld/Core/ConcurrentUnorderedMap.h"
 
 namespace lld {
@@ -85,13 +87,12 @@ struct RegionAllocatorState {
 
   retry:
     std::size_t spaceRemaining = slab->spaceRemaining();
-    void *alignedHead = slab->_head;
-    if (std::align(alignment, size, alignedHead, spaceRemaining)) {
+    if (spaceRemaining >= size) {
       // Allocation succeeded.
-      slab->_head = static_cast<char *>(alignedHead);
+      void *ret = slab->_head;
       slab->_head += size;
-      __msan_allocated_memory(alignedHead, size);
-      return alignedHead;
+      __msan_allocated_memory(ret, size);
+      return ret;
     }
 
     // Allocate new slab and try again.
@@ -146,12 +147,10 @@ private:
     auto newSlab = allocateSlab(paddedSize, alignment);
     newSlab->_next = _largeSlab;
     _largeSlab = newSlab;
-    void *alignedHead = newSlab->_head;
-    alignedHead = std::align(alignment, size, alignedHead, paddedSize);
-    assert(alignedHead && "Unable to allocate memory!");
+    void *ret = newSlab->_head;
     newSlab->_head += size;
-    __msan_allocated_memory(alignedHead, size);
-    return alignedHead;
+    __msan_allocated_memory(ret, size);
+    return ret;
   }
 
   RegionSlab *allocateSlab(std::size_t size, std::size_t alignment) {
@@ -231,16 +230,18 @@ public:
       : _slabSize(slabSize), _alloc(a) {}
 
   void *allocate(std::size_t size, std::size_t alignment) {
-    auto allocator = _regionMap.find(std::this_thread::get_id());
+    auto thread = GetCurrentThreadId();
+    auto allocator = _regionMap.find(thread);
     if (allocator == _regionMap.end()) {
-      allocator = _regionMap.insert(make_pair(std::this_thread::get_id(), RegionAllocatorState<Alloc>(_slabSize, _alloc))).first;
+      allocator = _regionMap.insert(make_pair(thread, RegionAllocatorState<Alloc>(_slabSize, _alloc))).first;
     }
 
     return allocator->second.allocate(size, alignment);
   }
 
   void deallocate(void *p, std::size_t size, std::size_t alignment) {
-    auto allocator = _regionMap.find(std::this_thread::get_id());
+    auto thread = GetCurrentThreadId();
+    auto allocator = _regionMap.find(thread);
     if (allocator == _regionMap.end()) {
       return;
     }
@@ -249,7 +250,7 @@ public:
   }
 
 private:
-  typedef ConcurrentUnorderedMap<std::thread::id,
+  typedef ConcurrentUnorderedMap<DWORD,
                                  RegionAllocatorState<Alloc>> RegionMap;
 
   RegionMap _regionMap;
