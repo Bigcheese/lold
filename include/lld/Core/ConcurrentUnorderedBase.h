@@ -25,9 +25,13 @@
 #include "lld/Core/Parallel.h"
 
 #ifdef _MSC_VER
-#define LLD_REBIND_ALLOC(T) alloc_traits::template rebind_alloc<T >::other
+# define LLD_REBIND_ALLOC(T) alloc_traits::template rebind_alloc<T >::other
+# if defined(_M_AMD64)
+#   define LLD_ATOMIC(T) lld::atomic<T >
+# endif
 #else
-#define LLD_REBIND_ALLOC(T) alloc_traits::template rebind_alloc<T>
+# define LLD_REBIND_ALLOC(T) alloc_traits::template rebind_alloc<T>
+# define LLD_ATOMIC(T) std::atomic<T>
 #endif
 
 namespace lld {
@@ -175,7 +179,7 @@ private:
   struct NodeBase {
     NodeBase(size_type key) : _key(key), _next(nullptr) {}
     size_type _key;
-    std::atomic<NodeBase *> _next;
+    LLD_ATOMIC(NodeBase *) _next;
   };
 
   struct Node : NodeBase {
@@ -188,7 +192,7 @@ private:
   // Rebound allocators.
   typedef typename LLD_REBIND_ALLOC(NodeBase) NodeBaseAlloc;
   typedef typename LLD_REBIND_ALLOC(Node) NodeAlloc;
-  typedef typename LLD_REBIND_ALLOC(std::atomic<NodeBase *>) BucketAlloc;
+  typedef typename LLD_REBIND_ALLOC(LLD_ATOMIC(NodeBase *)) BucketAlloc;
   typedef std::allocator_traits<NodeBaseAlloc> NodeBaseAllocTraits;
   typedef std::allocator_traits<NodeAlloc> NodeAllocTraits;
   typedef std::allocator_traits<BucketAlloc> BucketAllocTraits;
@@ -203,17 +207,20 @@ private:
   SplitOrderedList<NodeBase> _list;
 
   /// \brief Each segment contains i == 0 ? 2 : 2^i buckets.
-  std::atomic<std::atomic<NodeBase *> *> _segments[segmentTableSize];
+  LLD_ATOMIC(LLD_ATOMIC(NodeBase *) *) _segments[segmentTableSize];
 
   /// \brief The number of real nodes currently stored.
-  std::atomic<size_type> _count;
+  LLD_ATOMIC(size_type) _count;
 
   /// \brief The current number of buckets.
-  std::atomic<size_type> _size;
+  LLD_ATOMIC(size_type) _size;
 
   hasher _hasher;
   key_equal _equal;
   allocator_type _alloc;
+  NodeBaseAlloc _nodeBaseAlloc;
+  NodeAlloc _nodeAlloc;
+  BucketAlloc _bucketAlloc;
 
   /// \brief Doesn't skip dummy keys.
   typedef typename SplitOrderedList<NodeBase>::iterator full_iterator;
@@ -259,7 +266,7 @@ public:
                           const key_equal &ke = key_equal(),
                           const allocator_type &a = allocator_type())
       : _list(NodeBaseAlloc(a)), _segments(), _count(0), _size(n), _hasher(h),
-        _equal(ke), _alloc(a) {
+        _equal(ke), _alloc(a), _nodeBaseAlloc(_alloc), _nodeAlloc(_alloc), _bucketAlloc(_alloc) {
     for (unsigned i = 0; i < segmentTableSize; ++i)
       _segments[i].store(nullptr, std::memory_order_relaxed);
     setBucket(0, _list._head);
@@ -270,20 +277,18 @@ public:
       auto buckets = _segments[i].load(std::memory_order_relaxed);
       if (!buckets)
         break;
-      auto alloc = BucketAlloc(_alloc);
-      BucketAllocTraits::deallocate(alloc, buckets, getSegmentSize(i));
+      BucketAllocTraits::deallocate(_bucketAlloc, buckets, getSegmentSize(i));
     }
 
     for (full_iterator i = _list._head, e; i != e;) {
       auto prev = i++;
       if (prev->_key & size_type(1)) {
-        auto alloc = NodeAlloc(_alloc);
-        NodeAllocTraits::destroy(alloc, static_cast<Node *>(*prev));
-        NodeAllocTraits::deallocate(alloc, static_cast<Node *>(*prev), 1);
+        NodeAllocTraits::destroy(_nodeAlloc, static_cast<Node *>(*prev));
+        NodeAllocTraits::deallocate(_nodeAlloc, static_cast<Node *>(*prev), 1);
       } else {
         auto alloc = NodeBaseAlloc(_alloc);
-        NodeBaseAllocTraits::destroy(alloc, *prev);
-        NodeBaseAllocTraits::deallocate(alloc, *prev, 1);
+        NodeBaseAllocTraits::destroy(_nodeBaseAlloc, *prev);
+        NodeBaseAllocTraits::deallocate(_nodeBaseAlloc, *prev, 1);
       }
     }
   }
@@ -295,10 +300,9 @@ public:
   std::pair<iterator, bool> insert(const value_type &val) {
     size_type key = _hasher(Traits::extractKey(val));
     auto orderKey = soRegular(key);
-    auto alloc = NodeAlloc(_alloc);
-    auto node = NodeAllocTraits::allocate(alloc, 1);
-    NodeAllocTraits::construct(alloc, node, soRegular(key), val);
-    auto bucketIndex = key % _size.load(std::memory_order_relaxed);
+    auto node = NodeAllocTraits::allocate(_nodeAlloc, 1);
+    NodeAllocTraits::construct(_nodeAlloc, node, soRegular(key), val);
+    auto bucketIndex = key & (_size.load(std::memory_order_relaxed) - 1);
 
     if (!isBucketInitialized(bucketIndex))
       initalizeBucket(bucketIndex);
@@ -325,8 +329,8 @@ public:
         }
       } else if (cur->_key == orderKey && _equal(Traits::extractKey(*iterator(cur)), Traits::extractKey(val))) {
         // Value already exists.
-        NodeAllocTraits::destroy(alloc, node);
-        NodeAllocTraits::deallocate(alloc, node, 1);
+        NodeAllocTraits::destroy(_nodeAlloc, node);
+        NodeAllocTraits::deallocate(_nodeAlloc, node, 1);
         return std::make_pair(*cur, false);
       }
       prev = cur++;
@@ -336,7 +340,7 @@ public:
   iterator find(const key_type &k) {
     size_type key = _hasher(k);
     auto orderKey = soRegular(key);
-    auto bucketIndex = key % _size.load(std::memory_order_relaxed);
+    auto bucketIndex = key & (_size.load(std::memory_order_relaxed) - 1);
 
     if (!isBucketInitialized(bucketIndex))
       return end();
@@ -382,8 +386,7 @@ private:
     if (!segment) {
       // Allocate a new bucket segment.
       auto segSize = getSegmentSize(seg);
-      auto alloc = BucketAlloc(_alloc);
-      auto buckets = BucketAllocTraits::allocate(alloc, segSize);
+      auto buckets = BucketAllocTraits::allocate(_bucketAlloc, segSize);
       // HACK: This is not the proper way to initialize an array of
       // std::atomic<T*> to nullptr, but sadly the alternatives generate
       // horrible code.
@@ -391,7 +394,7 @@ private:
                               getSegmentSize(seg));
 
       if (!_segments[seg].compare_exchange_strong(segment, buckets))
-        BucketAllocTraits::deallocate(alloc, buckets, segSize);
+        BucketAllocTraits::deallocate(_bucketAlloc, buckets, segSize);
       else
         segment = buckets;
     }
@@ -428,14 +431,13 @@ private:
     auto parent = getBucket(parentIndex);
 
     // Create dummy node.
-    auto alloc = NodeBaseAlloc(_alloc);
-    auto dummyNode = NodeBaseAllocTraits::allocate(alloc, 1);
-    NodeBaseAllocTraits::construct(alloc, dummyNode, soDummy(bucket));
+    auto dummyNode = NodeBaseAllocTraits::allocate(_nodeBaseAlloc, 1);
+    NodeBaseAllocTraits::construct(_nodeBaseAlloc, dummyNode, soDummy(bucket));
     auto ins = _list.insert(parent, dummyNode);
     if (!ins.second) {
       // Another thread has already initalized this parent.
-      NodeBaseAllocTraits::destroy(alloc, dummyNode);
-      NodeBaseAllocTraits::deallocate(alloc, dummyNode, 1);
+      NodeBaseAllocTraits::destroy(_nodeBaseAlloc, dummyNode);
+      NodeBaseAllocTraits::deallocate(_nodeBaseAlloc, dummyNode, 1);
       dummyNode = ins.first;
     }
     // The dummyNode is still stored because the thread that added it to the
