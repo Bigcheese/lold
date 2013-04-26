@@ -14,6 +14,7 @@
 #include "lld/Core/LLVM.h"
 #include "lld/Core/range.h"
 
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MathExtras.h"
 
 #ifdef _MSC_VER
@@ -282,6 +283,58 @@ void parallel_for_each(Iterator begin, Iterator end, Func func) {
   std::for_each(begin, end, func);
 }
 #endif
+
+// MSVC has a horrible std::atomic implementation. So provide an alternate for
+// specificly the features we use.
+#if defined(_MSC_VER) && defined(_M_AMD64)
+#pragma intrinsic(_InterlockedExchange64)
+#pragma intrinsic(_InterlockedCompareExchange64)
+#pragma intrinsic(_InterlockedIncrement64)
+
+template <class T> struct atomic {
+  typedef T value_type;
+  typedef long long storage_type;
+
+  atomic() {}
+  atomic(value_type v) : _val(v) {}
+
+  void store(value_type v, std::memory_order order = std::memory_order_seq_cst) {
+    if (order != std::memory_order_seq_cst) {
+      _Compiler_barrier();
+      _val = v;
+    } else
+      exchange(v, order);
+  }
+
+  value_type load(std::memory_order order = std::memory_order_seq_cst) const {
+    auto ret = _val;
+    _Compiler_barrier();
+    return ret;
+  }
+
+  value_type exchange(value_type v, std::memory_order order = std::memory_order_seq_cst) {
+    return (value_type)_InterlockedExchange64((volatile storage_type *)&_val, (storage_type)v);
+  }
+
+  bool compare_exchange_strong(value_type &expected, value_type desired, std::memory_order order = std::memory_order_seq_cst) {
+    _Compiler_barrier();
+    value_type prev = (value_type)_InterlockedCompareExchange64((volatile storage_type *)&_val, (storage_type)desired, (storage_type)expected);
+    bool success = (prev == expected);
+    _Compiler_barrier();
+    if (success)
+      return true;
+    expected = prev;
+    return false;
+  }
+
+  value_type operator ++() {
+    return _InterlockedIncrement64((volatile storage_type *)&_val);
+  }
+
+  value_type _val;
+};
+#endif
+
 } // end namespace lld
 
 #endif
