@@ -514,7 +514,7 @@ public:
   virtual void write(ELFWriter *writer, llvm::FileOutputBuffer &buffer);
 
   inline void setNumEntries(int64_t numEntries) {
-    _stringMap.resize(numEntries);
+    _stringMap.reserve(numEntries);
   }
 
 private:
