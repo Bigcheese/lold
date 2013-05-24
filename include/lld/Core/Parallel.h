@@ -15,7 +15,6 @@
 #include "lld/Core/range.h"
 
 #include "llvm/Support/ErrorHandling.h"
-#include "llvm/Support/MathExtras.h"
 
 #ifdef _MSC_VER
 // Exceptions are disabled so this isn't defined, but concrt assumes it is.

@@ -10,9 +10,20 @@
 #ifndef LLD_CORE_ALLOCATORS_H
 #define LLD_CORE_ALLOCATORS_H
 
-extern "C" __declspec(dllimport) unsigned long __stdcall GetCurrentThreadId(void);
-
 #include "lld/Core/ConcurrentUnorderedMap.h"
+
+#ifdef _MSC_VER
+extern "C" __declspec(dllimport)
+unsigned long __stdcall GetCurrentThreadId(void);
+
+std::size_t getCurrentThreadID() {
+  return GetCurrentThreadId();
+}
+#else
+std::size_t getCurrentThreadID() {
+  return std::this_thread::get_id().hash();
+}
+#endif
 
 namespace lld {
 struct RegionSlab {
@@ -80,7 +91,7 @@ struct RegionAllocatorState {
     if (alignment > _curSlab.size() || size > _slabSize - llvm::RoundUpToAlignment(sizeof(RegionSlab), alignment))
       return allocateLarge(size, alignment);
 
-    auto &slab = _curSlab[llvm::getMSBIndex(alignment)];
+    auto &slab = _curSlab[llvm::findLastSet(alignment)];
 
     if (!slab)
       slab = allocateSlab(_slabSize, alignment);
@@ -119,7 +130,7 @@ struct RegionAllocatorState {
       return;
     }
 
-    auto &slab = _curSlab[llvm::getMSBIndex(alignment)];
+    auto &slab = _curSlab[llvm::findLastSet(alignment)];
 
     if (!slab)
       return;
@@ -230,7 +241,7 @@ public:
       : _slabSize(slabSize), _alloc(a) {}
 
   void *allocate(std::size_t size, std::size_t alignment) {
-    auto thread = GetCurrentThreadId();
+    auto thread = getCurrentThreadID();
     auto allocator = _regionMap.find(thread);
     if (allocator == _regionMap.end()) {
       allocator = _regionMap.insert(make_pair(thread, RegionAllocatorState<Alloc>(_slabSize, _alloc))).first;
@@ -240,7 +251,7 @@ public:
   }
 
   void deallocate(void *p, std::size_t size, std::size_t alignment) {
-    auto thread = GetCurrentThreadId();
+    auto thread = getCurrentThreadID();
     auto allocator = _regionMap.find(thread);
     if (allocator == _regionMap.end()) {
       return;
@@ -250,7 +261,7 @@ public:
   }
 
 private:
-  typedef ConcurrentUnorderedMap<DWORD,
+  typedef ConcurrentUnorderedMap<std::size_t,
                                  RegionAllocatorState<Alloc>> RegionMap;
 
   RegionMap _regionMap;

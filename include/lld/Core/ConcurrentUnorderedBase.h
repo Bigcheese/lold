@@ -24,6 +24,8 @@
 
 #include "lld/Core/Parallel.h"
 
+#include "llvm/Support/MathExtras.h"
+
 #ifdef _MSC_VER
 # define LLD_REBIND_ALLOC(T) alloc_traits::template rebind_alloc<T >::other
 # if defined(_M_AMD64)
@@ -135,28 +137,6 @@ public:
     }
   }
 };
-
-namespace detail {
-  /// \brief Macro compressed bit reversal table for 256 bits.
-  ///
-  /// http://graphics.stanford.edu/~seander/bithacks.html#BitReverseTable
-  static const unsigned char bitReverseTable256[256] = {
-  #define R2(n) n, n + 2 * 64, n + 1 * 64, n + 3 * 64
-  #define R4(n) R2(n), R2(n + 2 * 16), R2(n + 1 * 16), R2(n + 3 * 16)
-  #define R6(n) R4(n), R4(n + 2 * 4), R4(n + 1 * 4), R4(n + 3 * 4)
-    R6(0), R6(2), R6(1), R6(3)
-  };
-
-  static std::size_t reverseBits(std::size_t value) {
-    unsigned char in[sizeof(value)];
-    unsigned char out[sizeof(value)];
-    std::memcpy(in, &value, sizeof(value));
-    for (unsigned i = 0; i < sizeof(value); ++i)
-      out[(sizeof(value) - i) - 1] = bitReverseTable256[in[i]];
-    std::memcpy(&value, out, sizeof(value));
-    return value;
-  }
-}
 
 /// \brief Base class for ConcurrentUnordered{Map,Set}.
 template <class Traits>
@@ -286,7 +266,6 @@ public:
         NodeAllocTraits::destroy(_nodeAlloc, static_cast<Node *>(*prev));
         NodeAllocTraits::deallocate(_nodeAlloc, static_cast<Node *>(*prev), 1);
       } else {
-        auto alloc = NodeBaseAlloc(_alloc);
         NodeBaseAllocTraits::destroy(_nodeBaseAlloc, *prev);
         NodeBaseAllocTraits::deallocate(_nodeBaseAlloc, *prev, 1);
       }
@@ -361,7 +340,7 @@ public:
 
 private:
   static size_type getSegmentIndex(size_type bucket) {
-    return llvm::getMSBIndex(bucket);
+    return llvm::findLastSet(bucket);
   }
 
   static size_type getSegmentOffset(size_type seg) {
@@ -403,17 +382,17 @@ private:
 
   /// \brief Get the parent bucket of index by removing the highest set bit.
   static size_type getParentBucket(size_type index) {
-    return index & ~(1 << llvm::getMSBIndex(index));
+    return index & ~(1 << llvm::findLastSet(index));
   }
 
   static size_type soRegular(size_type key) {
     // Reverse and set bottom bit.
-    return detail::reverseBits(key) | size_type(1);
+    return llvm::reverseBits(key) | size_type(1);
   }
 
   static size_type soDummy(size_type key) {
     // Reverse and clear bottom bit.
-    return detail::reverseBits(key) & ~size_type(1);
+    return llvm::reverseBits(key) & ~size_type(1);
   }
 
   bool isBucketInitialized(size_type bucket) {
