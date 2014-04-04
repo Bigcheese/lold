@@ -90,12 +90,13 @@ public:
 /// the Registry object to parse files.
 class Registry {
 public:
-  Registry();
+  Registry(LinkingContext &context);
 
   /// Walk the list of registered Readers and find one that can parse the
   /// supplied file and parse it.
   error_code parseFile(std::unique_ptr<MemoryBuffer> &mb,
-                       std::vector<std::unique_ptr<File>> &result) const;
+                       std::vector<std::unique_ptr<File>> &result,
+                       bool allowRoundTrip = true) const;
 
   /// Walk the list of registered kind tables to convert a Reference Kind
   /// name to a value.
@@ -156,6 +157,7 @@ private:
   std::vector<std::unique_ptr<Reader>>                       _readers;
   std::vector<std::unique_ptr<YamlIOTaggedDocumentHandler>>  _yamlHandlers;
   std::vector<KindEntry>                                     _kindEntries;
+  LinkingContext                                            &_context;
 };
 
 // Utilities for building a KindString table.  For instance:

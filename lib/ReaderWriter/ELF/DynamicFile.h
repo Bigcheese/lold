@@ -36,6 +36,17 @@ public:
   }
 
   const atom_collection<SharedLibraryAtom> &sharedLibrary() const override {
+    if (_sharedLibraryAtoms.empty()) {
+      for (auto i = _objFile->begin_dynamic_symbols(),
+                e = _objFile->end_dynamic_symbols();
+           i != e; ++i) {
+        auto name = _objFile->getSymbolName(i);
+        if (!name)
+          continue;
+        _sharedLibraryAtoms._atoms.push_back(new (_alloc) ELFDynamicAtom<ELFT>(
+          *this, *name, _soname, &*i));
+      }
+    }
     return _sharedLibraryAtoms;
   }
 
@@ -65,7 +76,7 @@ private:
   std::unique_ptr<llvm::object::ELFFile<ELFT>> _objFile;
   atom_collection_vector<DefinedAtom> _definedAtoms;
   atom_collection_vector<UndefinedAtom> _undefinedAtoms;
-  atom_collection_vector<SharedLibraryAtom> _sharedLibraryAtoms;
+  mutable atom_collection_vector<SharedLibraryAtom> _sharedLibraryAtoms;
   atom_collection_vector<AbsoluteAtom> _absoluteAtoms;
   /// \brief DT_SONAME
   StringRef _soname;
