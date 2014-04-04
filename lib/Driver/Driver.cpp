@@ -48,7 +48,7 @@ bool Driver::link(LinkingContext &context, raw_ostream &diagnostics) {
   if (!inputGraph.size())
     return false;
 
-  bool fail = false;
+  std::atomic<bool> fail(false);
 
   // Read inputs
   ScopedTask readTask(getDefaultDomain(), "Read Args");
