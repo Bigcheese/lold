@@ -783,15 +783,15 @@ void RuntimeFile<ELFT>::addUndefinedAtom(StringRef symbolName) {
   this->addAtom(*atom);
 }
 
-template class ELFFile<ELF32LE>;
-template class ELFFile<ELF32BE>;
-template class ELFFile<ELF64LE>;
-template class ELFFile<ELF64BE>;
+template class ELFFile<llvm::object::ELF32LE>;
+template class ELFFile<llvm::object::ELF32BE>;
+template class ELFFile<llvm::object::ELF64LE>;
+template class ELFFile<llvm::object::ELF64BE>;
 
-template class RuntimeFile<ELF32LE>;
-template class RuntimeFile<ELF32BE>;
-template class RuntimeFile<ELF64LE>;
-template class RuntimeFile<ELF64BE>;
+template class RuntimeFile<llvm::object::ELF32LE>;
+template class RuntimeFile<llvm::object::ELF32BE>;
+template class RuntimeFile<llvm::object::ELF64LE>;
+template class RuntimeFile<llvm::object::ELF64BE>;
 
 } // end namespace elf
 } // end namespace lld
