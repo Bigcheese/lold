@@ -10,6 +10,7 @@
 #ifndef LLD_ELF_CONFIG_H
 #define LLD_ELF_CONFIG_H
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/StringSet.h"
@@ -108,6 +109,8 @@ struct Configuration {
   std::vector<SymbolVersion> VersionScriptLocals;
   std::vector<uint8_t> BuildIdVector;
   llvm::MapVector<Symbol *, RenamedSymbol> RenamedSymbols;
+  llvm::DenseMap<std::pair<llvm::StringRef, llvm::StringRef>, uint64_t>
+      CFGProfile;
   bool AllowMultipleDefinition;
   bool AsNeeded = false;
   bool Bsymbolic;
@@ -127,6 +130,7 @@ struct Configuration {
   bool GnuHash;
   bool ICF;
   bool MipsN32Abi = false;
+  bool NoCFGProfileReorder;
   bool NoGnuUnique;
   bool NoinhibitExec;
   bool NoUndefinedVersion;

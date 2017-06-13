@@ -20,11 +20,13 @@
 #include "SyntheticSections.h"
 #include "Target.h"
 #include "Threads.h"
+#include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/Support/FileOutputBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 #include <climits>
+#include <unordered_set>
 
 using namespace llvm;
 using namespace llvm::ELF;
@@ -909,6 +911,156 @@ template <class ELFT> static void sortBySymbolsOrder() {
       Cmd->sort([&](InputSectionBase *S) { return SectionOrder.lookup(S); });
 }
 
+// Sort sections by the profile data provided in the .note.llvm.callgraph
+// sections.
+//
+// This algorithm is based on Call-Chain Clustering from:
+// Optimizing Function Placement for Large-Scale Data-Center Applications
+// https://research.fb.com/wp-content/uploads/2017/01/cgo2017-hfsort-final1.pdf
+//
+// This first builds a call graph based on the profile data then iteratively
+// merges the hottest call edges as long as it would not create a cluster larger
+// than the page size. All clusters are then sorted by a density metric to
+// futher improve locality.
+template <class ELFT>
+static void sortByCFGProfile(ArrayRef<OutputSection *> OutputSections) {
+  if (Config->NoCFGProfileReorder)
+    return;
+
+  using NodeIndex = std::ptrdiff_t;
+  
+  struct Node {
+    Node() {}
+    Node(const InputSectionBase *IS) {
+      Sections.push_back(IS);
+      Size = IS->getSize();
+    }
+    std::vector<const InputSectionBase *> Sections;
+    int64_t Size = 0;
+    uint64_t Weight = 0;
+  };
+
+  struct Edge {
+    NodeIndex From;
+    NodeIndex To;
+    mutable uint64_t Weight;
+    bool operator==(const Edge Other) const {
+      return From == Other.From && To == Other.To;
+    }
+  };
+
+  struct EdgeHash {
+    std::size_t operator()(const Edge E) const {
+      return llvm::hash_combine(E.From, E.To);
+    };
+  };
+
+  std::vector<Node> Nodes;
+  std::unordered_set<Edge, EdgeHash> Edges;
+
+  auto InsertOrIncrementEdge = [](std::unordered_set<Edge, EdgeHash> &Edges,
+                                  const Edge E) {
+    if (E.From == E.To)
+      return;
+    auto Res = Edges.insert(E);
+    if (!Res.second)
+      Res.first->Weight = SaturatingAdd(Res.first->Weight, E.Weight);
+  };
+
+  {
+    llvm::DenseMap<const InputSectionBase *, NodeIndex> SecToNode;
+    
+    auto GetOrCreateNode =
+        [&Nodes, &SecToNode](const InputSectionBase *IS) -> NodeIndex {
+      auto Res = SecToNode.insert(std::make_pair(IS, Nodes.size()));
+      if (Res.second)
+        Nodes.emplace_back(IS);
+      return Res.first->second;
+    };
+
+    // Create the graph.
+    for (const auto &C : Config->CFGProfile) {
+      if (C.second == 0)
+        continue;
+      DefinedRegular *FromDR = dyn_cast_or_null<DefinedRegular>(
+          Symtab<ELFT>::X->find(C.first.first));
+      DefinedRegular *ToDR = dyn_cast_or_null<DefinedRegular>(
+          Symtab<ELFT>::X->find(C.first.second));
+      if (!FromDR || !ToDR)
+        continue;
+      auto FromSB = dyn_cast_or_null<const InputSectionBase>(FromDR->Section);
+      auto ToSB = dyn_cast_or_null<const InputSectionBase>(ToDR->Section);
+      if (!FromSB || !ToSB)
+        continue;
+      NodeIndex From = GetOrCreateNode(FromSB);
+      NodeIndex To = GetOrCreateNode(ToSB);
+      InsertOrIncrementEdge(Edges, {From, To, C.second});
+      Nodes[To].Weight = SaturatingAdd(Nodes[To].Weight, C.second);
+    }
+  }
+
+  // Collapse the graph.
+  while (!Edges.empty()) {
+    // Find the largest edge
+    // FIXME: non deterministic order for equal edges.
+    // FIXME: n^2
+    auto Max = std::max_element(
+        Edges.begin(), Edges.end(),
+        [](const Edge A, const Edge B) { return A.Weight < B.Weight; });
+    const Edge MaxE = *Max;
+    Edges.erase(Max);
+    // Merge the Nodes.
+    Node &From = Nodes[MaxE.From];
+    Node &To = Nodes[MaxE.To];
+    if (From.Size + To.Size > Target->PageSize)
+      continue;
+    From.Sections.insert(From.Sections.end(), To.Sections.begin(),
+                         To.Sections.end());
+    To.Sections.clear();
+    From.Size += To.Size;
+    From.Weight = SaturatingAdd(From.Weight, To.Weight);
+    // Collect all edges from or to the removed node and update them for the new
+    // node.
+    std::vector<Edge> OldEdges;
+    for (auto EI = Edges.begin(), EE = Edges.end(); EI != EE;) {
+      if (EI->From == MaxE.To || EI->To == MaxE.To) {
+        OldEdges.push_back(*EI);
+        EI = Edges.erase(EI);
+      } else
+        ++EI;
+    }
+    for (const Edge E : OldEdges) {
+      InsertOrIncrementEdge(Edges,
+                            {E.From == MaxE.To ? MaxE.From : E.From,
+                             E.To == MaxE.To ? MaxE.From : E.To, E.Weight});
+    }
+  }
+
+  // Sort by density.
+  std::sort(Nodes.begin(), Nodes.end(), [](const Node &A, const Node &B) {
+    return double(A.Weight) / double(A.Size) <
+           double(B.Weight) / double(B.Size);
+  });
+
+  // Generate order.
+  llvm::DenseMap<const InputSectionBase *, std::size_t> OrderMap;
+  ssize_t CurOrder = 0;
+
+  for (const Node &N : Nodes) {
+    if (N.Sections.empty())
+      continue;
+    for (const InputSectionBase *IS : N.Sections)
+      OrderMap[IS] = CurOrder++;
+  }
+  
+  for (OutputSection *OS : OutputSections) {
+    if (OS->Name != ".text")
+      continue;
+    OS->sort([&](InputSectionBase *IS) { return OrderMap.lookup(IS); });
+    break;
+  }
+}
+
 template <class ELFT>
 void Writer<ELFT>::forEachRelSec(std::function<void(InputSectionBase &)> Fn) {
   for (InputSectionBase *IS : InputSections) {
@@ -937,6 +1089,7 @@ template <class ELFT> void Writer<ELFT>::createSections() {
       Factory.addInputSec(IS, getOutputSectionName(IS->Name));
 
   Script->fabricateDefaultCommands();
+  sortByCFGProfile<ELFT>(OutputSections);
   sortBySymbolsOrder<ELFT>();
   sortInitFini(findSectionCommand(".init_array"));
   sortInitFini(findSectionCommand(".fini_array"));

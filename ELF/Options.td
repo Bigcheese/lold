@@ -162,6 +162,9 @@ def nostdlib: F<"nostdlib">,
 def no_as_needed: F<"no-as-needed">,
   HelpText<"Always DT_NEEDED for shared libraries">;
 
+def no_cfg_profile_reorder: F<"no-cfg-profile-reorder">,
+  HelpText<"Disable reordering of sections based on profile information">;
+
 def no_color_diagnostics: F<"no-color-diagnostics">,
   HelpText<"Do not use colors in diagnostics">;
 

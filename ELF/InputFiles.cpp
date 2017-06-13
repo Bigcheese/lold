@@ -511,6 +511,35 @@ InputSectionBase *ObjFile<ELFT>::createInputSection(const Elf_Shdr &Sec) {
   if (Name == ".eh_frame" && !Config->Relocatable)
     return make<EhInputSection>(this, &Sec, Name);
 
+  // Profile data.
+  if (Name == ".note.llvm.callgraph") {
+    ArrayRef<uint8_t> CallgraphBuff =
+        check(this->getObj().getSectionContents(&Sec));
+
+    StringRef Buff((const char *)CallgraphBuff.data(), CallgraphBuff.size());
+
+    auto ReadString = [&Buff]() {
+      size_t F = Buff.find_first_of(" \n");
+      StringRef Ret = Buff.substr(0, F);
+      Buff = Buff.substr(F + 1);
+      return Ret;
+    };
+
+    while (!Buff.empty()) {
+      StringRef From = ReadString();
+      StringRef To = ReadString();
+      uint64_t Count;
+      if (ReadString().getAsInteger(10, Count))
+        break;
+
+      // Merge duplicate counts by picking the largest.
+      uint64_t &C = Config->CFGProfile[std::make_pair(From, To)];
+      C = std::max(C, Count);
+    }
+
+    return &InputSection::Discarded;
+  }
+
   if (shouldMerge(Sec))
     return make<MergeInputSection>(this, &Sec, Name);
   return make<InputSection>(this, &Sec, Name);
