@@ -107,6 +107,14 @@ std::string ObjFile<ELFT>::getLineInfo(InputSectionBase *S, uint64_t Offset) {
   return "";
 }
 
+template<class ELFT>
+void lld::elf::ObjFile<ELFT>::parseCGProfile() {
+  for (const Elf_CGProfile &CGPE : CGProfile) {
+    uint64_t &C = Config->CGProfile[std::make_pair(getSymbolBody(CGPE.cgp_from).symbol(), getSymbolBody(CGPE.cgp_to).symbol())];
+    C = std::max(C, (uint64_t)CGPE.cgp_weight);
+  }
+}
+
 // Returns "<internal>", "foo.a(bar.o)" or "baz.o".
 std::string lld::toString(const InputFile *F) {
   if (!F)
@@ -178,6 +186,7 @@ void ObjFile<ELFT>::parse(DenseSet<CachedHashStringRef> &ComdatGroups) {
   // Read section and symbol tables.
   initializeSections(ComdatGroups);
   initializeSymbols();
+  parseCGProfile();
 }
 
 // Sections with SHT_GROUP and comdat bits define comdat section groups.
@@ -512,31 +521,8 @@ InputSectionBase *ObjFile<ELFT>::createInputSection(const Elf_Shdr &Sec) {
     return make<EhInputSection>(this, &Sec, Name);
 
   // Profile data.
-  if (Name == ".note.llvm.callgraph") {
-    ArrayRef<uint8_t> CallgraphBuff =
-        check(this->getObj().getSectionContents(&Sec));
-
-    StringRef Buff((const char *)CallgraphBuff.data(), CallgraphBuff.size());
-
-    auto ReadString = [&Buff]() {
-      size_t F = Buff.find_first_of(" \n");
-      StringRef Ret = Buff.substr(0, F);
-      Buff = Buff.substr(F + 1);
-      return Ret;
-    };
-
-    while (!Buff.empty()) {
-      StringRef From = ReadString();
-      StringRef To = ReadString();
-      uint64_t Count;
-      if (ReadString().getAsInteger(10, Count))
-        break;
-
-      // Merge duplicate counts by picking the largest.
-      uint64_t &C = Config->CFGProfile[std::make_pair(From, To)];
-      C = std::max(C, Count);
-    }
-
+  if (Name == ".note.llvm.cgprofile") {
+    CGProfile = check(this->getObj().template getSectionContentsAsArray<Elf_CGProfile>(&Sec));
     return &InputSection::Discarded;
   }
 

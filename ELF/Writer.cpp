@@ -979,13 +979,11 @@ static void sortByCFGProfile(ArrayRef<OutputSection *> OutputSections) {
     };
 
     // Create the graph.
-    for (const auto &C : Config->CFGProfile) {
+    for (const auto &C : Config->CGProfile) {
       if (C.second == 0)
         continue;
-      DefinedRegular *FromDR = dyn_cast_or_null<DefinedRegular>(
-          Symtab<ELFT>::X->find(C.first.first));
-      DefinedRegular *ToDR = dyn_cast_or_null<DefinedRegular>(
-          Symtab<ELFT>::X->find(C.first.second));
+      const DefinedRegular *FromDR = dyn_cast_or_null<const DefinedRegular>(C.first.first->body());
+      const DefinedRegular *ToDR = dyn_cast_or_null<const DefinedRegular>(C.first.second->body());
       if (!FromDR || !ToDR)
         continue;
       auto FromSB = dyn_cast_or_null<const InputSectionBase>(FromDR->Section);
@@ -1053,12 +1051,14 @@ static void sortByCFGProfile(ArrayRef<OutputSection *> OutputSections) {
       OrderMap[IS] = CurOrder++;
   }
   
-  for (OutputSection *OS : OutputSections) {
-    if (OS->Name != ".text")
-      continue;
-    OS->sort([&](InputSectionBase *IS) { return OrderMap.lookup(IS); });
-    break;
-  }
+
+  for (BaseCommand *Base : Script->Opt.Commands)
+    if (auto *Cmd = dyn_cast<OutputSectionCommand>(Base)) {
+      if (Cmd->Name != ".text")
+        continue;
+      Cmd->sort([&](InputSectionBase *IS) { return OrderMap.lookup(IS); });
+      break;
+    }
 }
 
 template <class ELFT>

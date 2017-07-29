@@ -145,6 +145,7 @@ template <class ELFT> class ObjFile : public ELFFileBase<ELFT> {
   typedef typename ELFT::Sym Elf_Sym;
   typedef typename ELFT::Shdr Elf_Shdr;
   typedef typename ELFT::Word Elf_Word;
+  typedef typename ELFT::CGProfile Elf_CGProfile;
 
   StringRef getShtGroupSignature(ArrayRef<Elf_Shdr> Sections,
                                  const Elf_Shdr &Sec);
@@ -197,6 +198,7 @@ private:
   initializeSections(llvm::DenseSet<llvm::CachedHashStringRef> &ComdatGroups);
   void initializeSymbols();
   void initializeDwarfLine();
+  void parseCGProfile();
   InputSectionBase *getRelocTarget(const Elf_Shdr &Sec);
   InputSectionBase *createInputSection(const Elf_Shdr &Sec);
   StringRef getSectionName(const Elf_Shdr &Sec);
@@ -216,6 +218,8 @@ private:
   // parse it only once for each object file we link.
   std::unique_ptr<llvm::DWARFDebugLine> DwarfLine;
   llvm::once_flag InitDwarfLine;
+
+  ArrayRef<Elf_CGProfile> CGProfile;
 };
 
 template <class ELFT> std::vector<ObjFile<ELFT> *> ObjFile<ELFT>::Instances;

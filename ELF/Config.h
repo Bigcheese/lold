@@ -109,8 +109,8 @@ struct Configuration {
   std::vector<SymbolVersion> VersionScriptLocals;
   std::vector<uint8_t> BuildIdVector;
   llvm::MapVector<Symbol *, RenamedSymbol> RenamedSymbols;
-  llvm::DenseMap<std::pair<llvm::StringRef, llvm::StringRef>, uint64_t>
-      CFGProfile;
+  llvm::DenseMap<std::pair<const Symbol *, const Symbol *>, uint64_t>
+      CGProfile;
   bool AllowMultipleDefinition;
   bool AsNeeded = false;
   bool Bsymbolic;
